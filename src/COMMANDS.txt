@@ -1,0 +1,7 @@
+# Copy and paste these commands into your Administrator PowerShell
+
+cd E:\
+
+npm install
+
+npm run dev

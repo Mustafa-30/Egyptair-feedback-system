@@ -99,8 +99,27 @@ class Feedback(Base):
     # Created by
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     
+    # Foreign Key to FeedbackFile - matches ER Diagram relationship
+    file_id = Column(Integer, ForeignKey("feedback_files.file_id"), nullable=True)
+    
     # Relationships
     created_by_user = relationship("User", back_populates="feedbacks", foreign_keys=[created_by])
+    source_file = relationship("FeedbackFile", back_populates="feedback_records", foreign_keys=[file_id])
+    
+    def save(self) -> None:
+        """
+        Save the feedback record
+        Matches + Save() : void from class diagram
+        """
+        pass  # Handled by SQLAlchemy session
+    
+    def update_sentiment(self, label: str, score: float) -> None:
+        """
+        Update sentiment analysis results
+        Matches + updateSentiment(label: string, score: float) : void from class diagram
+        """
+        self.sentiment = label
+        self.sentiment_confidence = score
     
     def __repr__(self):
         return f"<Feedback {self.id}: {self.sentiment}>"

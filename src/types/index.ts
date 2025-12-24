@@ -48,6 +48,118 @@ export interface Feedback {
   flightNumber?: string;
   customerName?: string;
   customerEmail?: string;
+  fileId?: number;  // Reference to FeedbackFile - matches ER Diagram
+}
+
+// ===============================
+// FeedbackFile - Matches ER Diagram
+// ===============================
+export type FileStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+export type FileType = 'csv' | 'xlsx' | 'xls';
+
+export interface FeedbackFile {
+  fileId: number;
+  fileName: string;
+  fileType: FileType;
+  fileSize?: number;
+  filePath?: string;
+  uploadDate: string;
+  status: FileStatus;
+  totalRows: number;
+  processedRows: number;
+  successCount: number;
+  errorCount: number;
+  errorMessage?: string;
+  processingStartedAt?: string;
+  processingCompletedAt?: string;
+  createdAt: string;
+  userId: number;
+}
+
+export interface FeedbackFileSummary {
+  fileId: number;
+  fileName: string;
+  status: FileStatus;
+  totalRows: number;
+  processedRows: number;
+  successCount: number;
+  errorCount: number;
+  successRate: number;
+}
+
+// ===============================
+// Report - Matches ER Diagram
+// ===============================
+export type ReportType = 'summary' | 'detailed' | 'sentiment_analysis' | 'trend_analysis' | 'custom';
+export type ReportFormat = 'pdf' | 'excel' | 'csv' | 'json';
+export type ReportStatus = 'pending' | 'generating' | 'completed' | 'failed';
+
+export interface Report {
+  reportId: number;
+  title: string;
+  description?: string;
+  reportType: ReportType;
+  createdAt: string;
+  generatedAt?: string;
+  filePath?: string;
+  fileFormat: ReportFormat;
+  fileSize?: number;
+  dateRangeStart?: string;
+  dateRangeEnd?: string;
+  filters?: Record<string, unknown>;
+  totalRecords: number;
+  positiveCount: number;
+  negativeCount: number;
+  neutralCount: number;
+  status: ReportStatus;
+  errorMessage?: string;
+  userId: number;
+}
+
+export interface ReportSummary {
+  totalRecords: number;
+  positiveCount: number;
+  positivePercentage: number;
+  negativeCount: number;
+  negativePercentage: number;
+  neutralCount: number;
+  neutralPercentage: number;
+  dateRange?: {
+    start: string;
+    end: string;
+  };
+  sentimentTrends?: SentimentTrend[];
+  languageDistribution?: Record<string, number>;
+}
+
+// ===============================
+// Dashboard - Matches ER Diagram
+// ===============================
+export type DashboardType = 'overview' | 'sentiment' | 'trends' | 'custom';
+
+export interface Dashboard {
+  dashboardId: number;
+  title: string;
+  description?: string;
+  dashboardType: DashboardType;
+  layoutConfig?: Record<string, unknown>;
+  chartConfig?: Record<string, unknown>;
+  filters?: Record<string, unknown>;
+  isDefault: boolean;
+  isPublic: boolean;
+  refreshInterval: number;
+  createdAt: string;
+  updatedAt?: string;
+  lastViewedAt?: string;
+  userId: number;
+  reportId?: number;
+}
+
+export interface ChartData {
+  chartType: string;
+  labels: string[];
+  datasets: Record<string, unknown>[];
+  options?: Record<string, unknown>;
 }
 
 export interface DashboardStats {

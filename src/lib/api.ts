@@ -385,6 +385,96 @@ export interface Feedback {
   resolved_at?: string;
   created_at: string;
   updated_at?: string;
+  file_id?: number;  // Reference to FeedbackFile - matches ER Diagram
+}
+
+// ===============================
+// FeedbackFile Types - Matches ER Diagram
+// ===============================
+export interface FeedbackFile {
+  file_id: number;
+  file_name: string;
+  file_type: string;
+  file_size?: number;
+  file_path?: string;
+  upload_date: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  total_rows: number;
+  processed_rows: number;
+  success_count: number;
+  error_count: number;
+  error_message?: string;
+  processing_started_at?: string;
+  processing_completed_at?: string;
+  created_at: string;
+  user_id: number;
+}
+
+export interface FeedbackFileSummary {
+  file_id: number;
+  file_name: string;
+  status: string;
+  total_rows: number;
+  processed_rows: number;
+  success_count: number;
+  error_count: number;
+  success_rate: number;
+}
+
+// ===============================
+// Report Types - Matches ER Diagram
+// ===============================
+export interface Report {
+  report_id: number;
+  title: string;
+  description?: string;
+  report_type: 'summary' | 'detailed' | 'sentiment_analysis' | 'trend_analysis' | 'custom';
+  created_at: string;
+  generated_at?: string;
+  file_path?: string;
+  file_format: 'pdf' | 'excel' | 'csv' | 'json';
+  file_size?: number;
+  date_range_start?: string;
+  date_range_end?: string;
+  filters?: Record<string, unknown>;
+  total_records: number;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  status: 'pending' | 'generating' | 'completed' | 'failed';
+  error_message?: string;
+  user_id: number;
+}
+
+export interface ReportGenerateRequest {
+  report_type: 'summary' | 'detailed' | 'sentiment_analysis' | 'trend_analysis' | 'custom';
+  title?: string;
+  date_range_start?: string;
+  date_range_end?: string;
+  filters?: Record<string, unknown>;
+  export_format?: 'pdf' | 'excel' | 'csv' | 'json';
+  include_charts?: boolean;
+}
+
+// ===============================
+// Dashboard Types - Matches ER Diagram
+// ===============================
+export interface Dashboard {
+  dashboard_id: number;
+  title: string;
+  description?: string;
+  dashboard_type: 'overview' | 'sentiment' | 'trends' | 'custom';
+  layout_config?: Record<string, unknown>;
+  chart_config?: Record<string, unknown>;
+  filters?: Record<string, unknown>;
+  is_default: boolean;
+  is_public: boolean;
+  refresh_interval: number;
+  created_at: string;
+  updated_at?: string;
+  last_viewed_at?: string;
+  user_id: number;
+  report_id?: number;
 }
 
 export interface CreateFeedbackRequest {
@@ -449,3 +539,113 @@ export interface ChartData {
   language_distribution: Array<{ name: string; value: number }>;
   status_distribution: Array<{ name: string; value: number }>;
 }
+
+// ===============================
+// API Functions for New Entities
+// ===============================
+
+// FeedbackFile API
+export const filesApi = {
+  list: (params?: { page?: number; page_size?: number; status?: string }) =>
+    apiFetch<{ items: FeedbackFile[]; total: number; page: number; page_size: number; total_pages: number }>(
+      `/v1/files/?${new URLSearchParams(params as Record<string, string> || {}).toString()}`
+    ),
+  
+  get: (fileId: number) =>
+    apiFetch<FeedbackFile>(`/v1/files/${fileId}`),
+  
+  getSummary: (fileId: number) =>
+    apiFetch<FeedbackFileSummary>(`/v1/files/${fileId}/summary`),
+  
+  getRecords: (fileId: number, params?: { page?: number; page_size?: number; sentiment?: string }) =>
+    apiFetch<{ file_id: number; file_name: string; items: Feedback[]; total: number }>(
+      `/v1/files/${fileId}/records?${new URLSearchParams(params as Record<string, string> || {}).toString()}`
+    ),
+  
+  delete: (fileId: number, deleteRecords?: boolean) =>
+    apiFetch<{ message: string; file_id: number; records_deleted: number }>(
+      `/v1/files/${fileId}?delete_records=${deleteRecords || false}`,
+      { method: 'DELETE' }
+    ),
+  
+  getOverview: () =>
+    apiFetch<{ total_files: number; total_records: number; total_processed: number; by_status: Record<string, number> }>(
+      '/v1/files/stats/overview'
+    ),
+};
+
+// Report API
+export const reportsApi = {
+  list: (params?: { page?: number; page_size?: number; report_type?: string; status?: string }) =>
+    apiFetch<{ items: Report[]; total: number; page: number; page_size: number; total_pages: number }>(
+      `/v1/reports/?${new URLSearchParams(params as Record<string, string> || {}).toString()}`
+    ),
+  
+  get: (reportId: number) =>
+    apiFetch<Report>(`/v1/reports/${reportId}`),
+  
+  generate: (request: ReportGenerateRequest) =>
+    apiFetch<Report>('/v1/reports/generate', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    }),
+  
+  getSummary: (reportId: number) =>
+    apiFetch<{ total_records: number; positive_count: number; positive_percentage: number; negative_count: number; negative_percentage: number; neutral_count: number; neutral_percentage: number }>(
+      `/v1/reports/${reportId}/summary`
+    ),
+  
+  export: (reportId: number, format: 'pdf' | 'excel' | 'csv' | 'json') =>
+    apiFetch<{ report_id: number; title: string; format: string; status: string; download_url: string }>(
+      `/v1/reports/${reportId}/export?format=${format}`,
+      { method: 'POST' }
+    ),
+  
+  delete: (reportId: number) =>
+    apiFetch<{ message: string; report_id: number }>(`/v1/reports/${reportId}`, { method: 'DELETE' }),
+  
+  getOverview: () =>
+    apiFetch<{ total_reports: number; by_type: Record<string, number>; recent_reports: Array<{ report_id: number; title: string; created_at: string; status: string }> }>(
+      '/v1/reports/stats/overview'
+    ),
+};
+
+// Dashboard API
+export const dashboardsApi = {
+  list: (params?: { page?: number; page_size?: number; dashboard_type?: string }) =>
+    apiFetch<{ items: Dashboard[]; total: number; page: number; page_size: number; total_pages: number }>(
+      `/v1/dashboards/?${new URLSearchParams(params as Record<string, string> || {}).toString()}`
+    ),
+  
+  getDefault: () =>
+    apiFetch<Dashboard>('/v1/dashboards/default'),
+  
+  get: (dashboardId: number) =>
+    apiFetch<Dashboard>(`/v1/dashboards/${dashboardId}`),
+  
+  create: (data: Partial<Dashboard>) =>
+    apiFetch<Dashboard>('/v1/dashboards/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  
+  update: (dashboardId: number, data: Partial<Dashboard>) =>
+    apiFetch<Dashboard>(`/v1/dashboards/${dashboardId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  
+  refresh: (dashboardId: number) =>
+    apiFetch<{ dashboard_id: number; refreshed_at: string; stats: DashboardStats }>(
+      `/v1/dashboards/${dashboardId}/refresh`,
+      { method: 'POST' }
+    ),
+  
+  getCharts: (dashboardId: number) =>
+    apiFetch<{ dashboard_id: number; charts: Array<{ id: string; type: string; title: string; data: unknown }>; generated_at: string }>(
+      `/v1/dashboards/${dashboardId}/charts`
+    ),
+  
+  delete: (dashboardId: number) =>
+    apiFetch<{ message: string; dashboard_id: number }>(`/v1/dashboards/${dashboardId}`, { method: 'DELETE' }),
+};

@@ -46,5 +46,24 @@ class User(Base):
         foreign_keys="[Feedback.created_by]"
     )
     
+    # New relationships matching ER Diagram
+    uploaded_files = relationship(
+        "FeedbackFile",
+        back_populates="uploader",
+        foreign_keys="[FeedbackFile.user_id]"
+    )
+    
+    reports = relationship(
+        "Report",
+        back_populates="owner",
+        foreign_keys="[Report.user_id]"
+    )
+    
+    dashboards = relationship(
+        "Dashboard",
+        back_populates="owner",
+        foreign_keys="[Dashboard.user_id]"
+    )
+    
     def __repr__(self):
         return f"<User {self.username}>"

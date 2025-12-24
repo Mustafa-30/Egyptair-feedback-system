@@ -1,15 +1,18 @@
 """
 File Upload API Routes
+Updated to create FeedbackFile records matching the ER Diagram
 """
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.orm import Session
+import os
 
 from app.core.database import get_db
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.feedback import Feedback
+from app.models.feedback_file import FeedbackFile, FileStatus
 from app.services.upload_service import upload_service
 from app.services.sentiment_service import sentiment_analyzer
 
@@ -53,6 +56,7 @@ async def process_upload(
 ):
     """
     Process uploaded file and optionally save to database
+    Now creates FeedbackFile record to match ER Diagram
     """
     # Validate file
     upload_service.validate_file(file)
@@ -62,6 +66,29 @@ async def process_upload(
     
     # Validate structure
     info = upload_service.validate_dataframe(df)
+    
+    # Determine file type from extension
+    file_ext = os.path.splitext(file.filename)[1].lower().replace('.', '')
+    
+    # Create FeedbackFile record - matches diagram entity
+    feedback_file = FeedbackFile(
+        file_name=file.filename,
+        file_type=file_ext,
+        file_size=file.size if hasattr(file, 'size') else None,
+        upload_date=datetime.utcnow(),
+        status=FileStatus.PROCESSING.value,
+        total_rows=len(df),
+        processed_rows=0,
+        success_count=0,
+        error_count=0,
+        user_id=current_user.id,
+        processing_started_at=datetime.utcnow()
+    )
+    
+    if save_to_db:
+        db.add(feedback_file)
+        db.commit()
+        db.refresh(feedback_file)
     
     # Use provided text column or detected one
     text_col = text_column or info["text_column"]
@@ -95,16 +122,28 @@ async def process_upload(
                     source="upload",
                     status="pending",
                     priority="medium",
-                    created_by=current_user.id
+                    created_by=current_user.id,
+                    file_id=feedback_file.file_id  # Link to FeedbackFile
                 )
                 db.add(feedback)
                 saved_count += 1
             except Exception as e:
                 errors.append({"row": idx + 1, "error": str(e)})
         
+        # Update FeedbackFile with processing results
+        feedback_file.processed_rows = len(processed_data)
+        feedback_file.success_count = saved_count
+        feedback_file.error_count = len(errors)
+        feedback_file.status = FileStatus.COMPLETED.value if not errors else FileStatus.COMPLETED.value
+        feedback_file.processing_completed_at = datetime.utcnow()
+        
+        if errors:
+            feedback_file.error_message = f"Errors in {len(errors)} rows: {errors[0]['error'][:100]}..."
+        
         db.commit()
     
     return {
+        "file_id": feedback_file.file_id if save_to_db else None,
         "filename": file.filename,
         "total_rows": len(df),
         "processed_count": len(processed_data),

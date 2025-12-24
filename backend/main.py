@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import auth, users, feedback, analytics, upload
+from app.api import auth, users, feedback, analytics, upload, files, reports, dashboards
 
 
 @asynccontextmanager
@@ -55,6 +55,10 @@ app.include_router(users.router, prefix=f"{settings.API_PREFIX}/users", tags=["U
 app.include_router(feedback.router, prefix=f"{settings.API_PREFIX}/feedback", tags=["Feedback"])
 app.include_router(analytics.router, prefix=f"{settings.API_PREFIX}/analytics", tags=["Analytics"])
 app.include_router(upload.router, prefix=f"{settings.API_PREFIX}/upload", tags=["File Upload"])
+# New routes matching ER Diagram entities
+app.include_router(files.router, prefix=f"{settings.API_PREFIX}/files", tags=["Feedback Files"])
+app.include_router(reports.router, prefix=f"{settings.API_PREFIX}/reports", tags=["Reports"])
+app.include_router(dashboards.router, prefix=f"{settings.API_PREFIX}/dashboards", tags=["Dashboards"])
 
 
 @app.get("/")

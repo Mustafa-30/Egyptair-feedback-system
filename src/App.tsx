@@ -43,7 +43,7 @@ function AppContent() {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard onViewFeedback={handleViewFeedback} />;
+        return <Dashboard onViewFeedback={handleViewFeedback} onNavigate={setCurrentPage} />;
       case 'upload':
         return <UploadFeedback onNavigate={setCurrentPage} />;
       case 'feedback':
@@ -55,7 +55,7 @@ function AppContent() {
       case 'settings':
         return <Settings />;
       default:
-        return <Dashboard onViewFeedback={handleViewFeedback} />;
+        return <Dashboard onViewFeedback={handleViewFeedback} onNavigate={setCurrentPage} />;
     }
   };
 

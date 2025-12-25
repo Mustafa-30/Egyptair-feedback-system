@@ -85,16 +85,26 @@ class UploadService:
     def validate_dataframe(self, df: pd.DataFrame) -> Dict:
         """
         Validate DataFrame structure and return info
+        
+        Expected columns (prioritized order):
+        - text/feedback (REQUIRED): The feedback text
+        - customer_name (optional): Customer's full name  
+        - flight_number (optional): Flight identifier (e.g., MS777)
+        - flight_date (optional): Date of the flight
+        - language (optional): 'ar' or 'en' (auto-detected if not provided)
         """
         if df.empty:
             raise HTTPException(status_code=400, detail="File is empty")
         
-        # Look for common column names (including user's format: feedback_id, feedback_review, feedback_date)
-        text_columns = ['text', 'feedback', 'comment', 'description', 'message', 'review', 'feedback_review']
+        # Normalize column names (lowercase and strip whitespace)
+        df.columns = [str(col).lower().strip() for col in df.columns]
+        
+        # Priority order for text column detection
+        text_columns = ['text', 'feedback', 'comment', 'review', 'message', 'feedback_review', 'description']
         found_text_col = None
         
-        for col in df.columns:
-            if col.lower() in text_columns:
+        for col in text_columns:
+            if col in df.columns:
                 found_text_col = col
                 break
         
@@ -108,15 +118,34 @@ class UploadService:
         if found_text_col is None:
             raise HTTPException(
                 status_code=400,
-                detail="Could not find feedback text column. Please include a column named 'text', 'feedback', or 'comment'."
+                detail="Could not find feedback text column. Please include a column named 'text' or 'feedback'."
             )
+        
+        # Detect other expected columns
+        detected_columns = {
+            "text_column": found_text_col,
+            "customer_name_column": self._find_column(df, ['customer_name', 'name', 'customer', 'full_name']),
+            "flight_number_column": self._find_column(df, ['flight_number', 'flight', 'flight_no', 'flight_id']),
+            "flight_date_column": self._find_column(df, ['flight_date', 'date', 'travel_date', 'flight_dt', 'feedback_date']),
+            "language_column": self._find_column(df, ['language', 'lang', 'language_code'])
+        }
         
         return {
             "total_rows": len(df),
             "columns": list(df.columns),
             "text_column": found_text_col,
+            "detected_columns": detected_columns,
             "sample_data": df.head(5).to_dict(orient='records')
         }
+    
+    def _find_column(self, df: pd.DataFrame, possible_names: List[str]) -> Optional[str]:
+        """
+        Find a column by checking multiple possible names
+        """
+        for name in possible_names:
+            if name in df.columns:
+                return name
+        return None
     
     def process_feedback_data(
         self,
@@ -126,38 +155,75 @@ class UploadService:
     ) -> List[Dict]:
         """
         Process DataFrame and extract feedback data
+        
+        Prioritized columns (your preferred format):
+        - text/feedback (REQUIRED): The feedback text
+        - customer_name: Customer's full name
+        - flight_number: Flight identifier (e.g., MS777)
+        - flight_date: Date of the flight
+        - language: 'ar' or 'en' (auto-detected if not provided)
+        
+        Omitted columns (not extracted):
+        - customer_email
+        - service_type
         """
         results = []
+        
+        # Normalize column names
+        df.columns = [str(col).lower().strip() for col in df.columns]
+        text_column = text_column.lower().strip()
+        
+        # Find columns using priority order
+        name_col = self._find_column(df, ['customer_name', 'name', 'customer', 'full_name'])
+        flight_col = self._find_column(df, ['flight_number', 'flight', 'flight_no', 'flight_id'])
+        date_col = self._find_column(df, ['flight_date', 'date', 'travel_date', 'flight_dt', 'feedback_date'])
+        lang_col = self._find_column(df, ['language', 'lang', 'language_code'])
         
         for idx, row in df.iterrows():
             text = str(row.get(text_column, '')).strip()
             
-            if not text or text == 'nan' or len(text) < 5:
+            if not text or text == 'nan' or len(text) < 10:
                 continue
+            
+            # Extract customer name
+            customer_name = None
+            if name_col and pd.notna(row.get(name_col)):
+                customer_name = str(row[name_col]).strip()
+                if customer_name == 'nan':
+                    customer_name = None
+            
+            # Extract flight number
+            flight_number = None
+            if flight_col and pd.notna(row.get(flight_col)):
+                flight_number = str(row[flight_col]).strip()
+                if flight_number == 'nan':
+                    flight_number = None
+            
+            # Extract flight date
+            flight_date = None
+            if date_col and pd.notna(row.get(date_col)):
+                try:
+                    flight_date = pd.to_datetime(row[date_col]).isoformat()
+                except:
+                    pass
+            
+            # Extract language (or auto-detect later)
+            specified_language = None
+            if lang_col and pd.notna(row.get(lang_col)):
+                lang_value = str(row[lang_col]).strip().lower()
+                if lang_value in ['ar', 'arabic', 'العربية']:
+                    specified_language = 'AR'
+                elif lang_value in ['en', 'english']:
+                    specified_language = 'EN'
             
             feedback_data = {
                 "text": text,
-                "customer_name": str(row.get('customer_name', row.get('name', ''))) if 'customer_name' in row or 'name' in row else None,
-                "customer_email": str(row.get('customer_email', row.get('email', ''))) if 'customer_email' in row or 'email' in row else None,
-                "flight_number": str(row.get('flight_number', row.get('flight', ''))) if 'flight_number' in row or 'flight' in row else None,
-                "feedback_date": None,
+                "customer_name": customer_name,
+                "customer_email": None,  # Omitted per user preference
+                "flight_number": flight_number,
+                "feedback_date": flight_date,
                 "source": "upload"
             }
-            
-            # Try to parse date (including user's feedback_date column)
-            for date_col in ['feedback_date', 'date', 'created_at', 'timestamp']:
-                if date_col in df.columns and pd.notna(row.get(date_col)):
-                    try:
-                        feedback_data["feedback_date"] = pd.to_datetime(row[date_col]).isoformat()
-                    except:
-                        pass
-                    break
-            
-            # Try to get feedback ID if provided
-            for id_col in ['feedback_id', 'id', 'ID']:
-                if id_col in df.columns and pd.notna(row.get(id_col)):
-                    feedback_data["external_id"] = str(row[id_col])
-                    break
             
             # Analyze sentiment if requested
             if analyze_sentiment:
@@ -165,11 +231,13 @@ class UploadService:
                 feedback_data.update({
                     "sentiment": analysis["sentiment"],
                     "sentiment_confidence": analysis["confidence"],
-                    "language": analysis["language"],
+                    "language": specified_language or analysis["language"],  # Use specified or auto-detected
                     "preprocessed_text": analysis["preprocessed_text"],
                     "model_version": analysis["model_version"],
                     "analyzed_at": datetime.utcnow().isoformat()
                 })
+            elif specified_language:
+                feedback_data["language"] = specified_language
             
             results.append(feedback_data)
         

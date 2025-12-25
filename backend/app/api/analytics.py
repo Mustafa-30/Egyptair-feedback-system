@@ -18,25 +18,51 @@ router = APIRouter()
 @router.get("/dashboard")
 async def get_dashboard_stats(
     days: int = Query(30, ge=1, le=365),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    sentiment: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get dashboard statistics
+    Get dashboard statistics with optional filters
     """
     # Calculate date range
-    end_date = datetime.utcnow()
-    start_date = end_date - timedelta(days=days)
+    if date_from and date_to:
+        try:
+            start_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            end_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+        except:
+            end_date = datetime.utcnow()
+            start_date = end_date - timedelta(days=days)
+    else:
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days)
     
-    # Total feedback count
+    # Base query with date filter
+    query = db.query(Feedback).filter(Feedback.created_at >= start_date)
+    if date_to:
+        query = query.filter(Feedback.created_at <= end_date)
+    
+    # Apply sentiment filter if provided
+    if sentiment and sentiment != 'all':
+        query = query.filter(Feedback.sentiment == sentiment)
+    
+    # Total feedback count (all time)
     total_feedback = db.query(func.count(Feedback.id)).scalar() or 0
     
     # Feedback in date range
-    query_range = db.query(Feedback).filter(Feedback.created_at >= start_date)
-    feedback_in_range = query_range.count()
+    feedback_in_range = query.count()
+    
+    # Today's feedback
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_count = db.query(func.count(Feedback.id)).filter(
+        Feedback.created_at >= today_start
+    ).scalar() or 0
     
     # Previous period for comparison
-    prev_start = start_date - timedelta(days=days)
+    period_length = (end_date - start_date).days or days
+    prev_start = start_date - timedelta(days=period_length)
     prev_count = db.query(func.count(Feedback.id)).filter(
         and_(Feedback.created_at >= prev_start, Feedback.created_at < start_date)
     ).scalar() or 0
@@ -48,8 +74,12 @@ async def get_dashboard_stats(
     else:
         change_str = "+100%" if feedback_in_range > 0 else "0%"
     
-    # Sentiment counts
-    sentiment_counts = db.query(
+    # Sentiment counts (within date range)
+    sentiment_query = db.query(Feedback).filter(Feedback.created_at >= start_date)
+    if date_to:
+        sentiment_query = sentiment_query.filter(Feedback.created_at <= end_date)
+    
+    sentiment_counts = sentiment_query.with_entities(
         Feedback.sentiment,
         func.count(Feedback.id)
     ).group_by(Feedback.sentiment).all()
@@ -61,20 +91,73 @@ async def get_dashboard_stats(
     
     total_with_sentiment = positive + negative + neutral
     
+    # Pending feedback count
+    pending_count = db.query(func.count(Feedback.id)).filter(
+        Feedback.status == "pending"
+    ).scalar() or 0
+    
+    # Resolved count for resolution rate
+    resolved_count = db.query(func.count(Feedback.id)).filter(
+        Feedback.status == "resolved"
+    ).scalar() or 0
+    
+    resolution_rate = round((resolved_count / total_feedback * 100) if total_feedback > 0 else 0, 1)
+    
+    # Average confidence
+    avg_confidence = db.query(func.avg(Feedback.sentiment_confidence)).scalar() or 0
+    
+    # Language distribution
+    language_counts = db.query(
+        Feedback.language,
+        func.count(Feedback.id)
+    ).group_by(Feedback.language).all()
+    
+    language_dict = {l[0]: l[1] for l in language_counts if l[0]}
+    arabic_count = language_dict.get("AR", 0)
+    english_count = language_dict.get("EN", 0)
+    
+    # Priority distribution
+    priority_counts = db.query(
+        Feedback.priority,
+        func.count(Feedback.id)
+    ).group_by(Feedback.priority).all()
+    
+    priority_dict = {p[0]: p[1] for p in priority_counts if p[0]}
+    
     return {
         "total_feedback": total_feedback,
+        "feedback_in_range": feedback_in_range,
         "total_change": change_str,
+        "today_count": today_count,
+        "positive_count": positive,
         "positive_feedback": positive,
         "positive_percentage": round((positive / total_with_sentiment * 100) if total_with_sentiment > 0 else 0, 1),
+        "negative_count": negative,
         "negative_feedback": negative,
         "negative_percentage": round((negative / total_with_sentiment * 100) if total_with_sentiment > 0 else 0, 1),
+        "neutral_count": neutral,
         "neutral_feedback": neutral,
         "neutral_percentage": round((neutral / total_with_sentiment * 100) if total_with_sentiment > 0 else 0, 1),
+        "pending_count": pending_count,
+        "average_confidence": round(avg_confidence * 100, 1) if avg_confidence else 0,
+        "resolution_rate": resolution_rate,
+        "language_distribution": {
+            "arabic": arabic_count,
+            "english": english_count,
+            "total": arabic_count + english_count
+        },
+        "priority_distribution": {
+            "high": priority_dict.get("high", 0),
+            "medium": priority_dict.get("medium", 0),
+            "low": priority_dict.get("low", 0),
+            "urgent": priority_dict.get("urgent", 0)
+        },
         "date_range": {
             "start": start_date.isoformat(),
             "end": end_date.isoformat(),
             "days": days
-        }
+        },
+        "last_updated": datetime.utcnow().isoformat()
     }
 
 

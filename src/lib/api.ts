@@ -252,7 +252,16 @@ export const feedbackApi = {
 
 // Analytics API
 export const analyticsApi = {
-  getStats: () => apiFetch<DashboardStats>('/analytics/dashboard'),
+  getStats: (params?: { days?: string; date_from?: string; date_to?: string; sentiment?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.days) searchParams.append('days', params.days);
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
+    if (params?.sentiment) searchParams.append('sentiment', params.sentiment);
+    
+    const query = searchParams.toString();
+    return apiFetch<DashboardStats>(`/analytics/dashboard${query ? `?${query}` : ''}`);
+  },
 
   getTrends: (params?: { days?: number; granularity?: string }) => {
     const searchParams = new URLSearchParams();

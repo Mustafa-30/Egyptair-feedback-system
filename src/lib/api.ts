@@ -248,6 +248,11 @@ export const feedbackApi = {
       method: 'POST',
       body: JSON.stringify({ feedback_ids: ids, use_ml: useML }),
     }),
+
+  clearAll: () =>
+    apiFetch<{ message: string; deleted_count: number }>('/feedback/clear-all?confirm=true', {
+      method: 'DELETE',
+    }),
 };
 
 // Analytics API

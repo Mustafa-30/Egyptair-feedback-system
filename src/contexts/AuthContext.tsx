@@ -39,7 +39,7 @@ function mapApiUserToUser(apiUser: {
     name: apiUser.name,
     email: apiUser.email,
     username: apiUser.username,
-    role: apiUser.role === 'admin' ? 'supervisor' : 'agent',
+    role: (apiUser.role as 'admin' | 'supervisor' | 'agent') || 'agent',
     status: apiUser.status as 'active' | 'inactive',
     lastLogin: apiUser.last_login || new Date().toISOString(),
   };

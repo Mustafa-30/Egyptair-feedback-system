@@ -1,7 +1,10 @@
 import { useState } from 'react';
-import { Save, Download } from 'lucide-react';
+import { Save, Download, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
+import { feedbackApi, uploadApi, usersApi, ApiError } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 export function Settings() {
+  const { user } = useAuth();
   const [settings, setSettings] = useState({
     defaultDateRange: 'last30',
     rowsPerPage: 25,
@@ -15,6 +18,9 @@ export function Settings() {
   });
 
   const [saved, setSaved] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearingData, setClearingData] = useState(false);
+  const [clearConfirmText, setClearConfirmText] = useState('');
 
   const handleSave = () => {
     // Simulate saving
@@ -26,6 +32,59 @@ export function Settings() {
   const handleExportData = () => {
     alert('Exporting all data... This may take a few minutes.');
   };
+
+  const handleClearAllData = async () => {
+    if (clearConfirmText !== 'DELETE ALL') {
+      alert('Please type "DELETE ALL" to confirm');
+      return;
+    }
+
+    // Check if user has permission (admin or supervisor)
+    console.log('Current user:', user);
+    if (!user || (user.role !== 'admin' && user.role !== 'supervisor')) {
+      alert(`Permission denied: Only administrators and supervisors can clear all data.\n\nYour role: ${user?.role || 'unknown'}`);
+      return;
+    }
+
+    try {
+      setClearingData(true);
+      console.log('Attempting to clear all feedback data...');
+      console.log('User role:', user.role);
+      
+      const result = await feedbackApi.clearAll();
+      
+      console.log('Clear data result:', result);
+      alert(`✅ Successfully deleted ${result.deleted_count} feedback entries!`);
+      setShowClearConfirm(false);
+      setClearConfirmText('');
+      // Refresh the page to reflect changes
+      setTimeout(() => window.location.reload(), 1000);
+    } catch (error: any) {
+      console.error('Clear data error:', error);
+      console.error('Error type:', typeof error);
+      console.error('Error keys:', error ? Object.keys(error) : 'null');
+      
+      let errorMessage = 'Failed to clear data. Unknown error occurred.';
+      
+      if (error instanceof ApiError) {
+        errorMessage = error.detail || error.message;
+        if (error.status === 403 || error.status === 401) {
+          errorMessage = `Permission denied: ${errorMessage}\n\nOnly administrators and supervisors can clear all data.`;
+        }
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error && typeof error === 'object') {
+        errorMessage = error.detail || error.message || JSON.stringify(error);
+      }
+      
+      alert(`❌ Error: ${errorMessage}`);
+    } finally {
+      setClearingData(false);
+    }
+  };
+
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -265,6 +324,118 @@ export function Settings() {
           </label>
         </div>
       </div>
+
+      {/* Data Management - DANGER ZONE */}
+      <div className="bg-white rounded-lg shadow-md p-6 border border-red-200">
+        <h3 className="text-red-600 mb-4 flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5" />
+          Danger Zone
+        </h3>
+        <div className="space-y-4">
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="text-[#1F2937] font-medium mb-1">Clear All Feedback Data</h4>
+                <p className="text-[#6B7280] text-sm">
+                  Permanently delete all feedback entries from the database. This action cannot be undone.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowClearConfirm(true)}
+                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors flex items-center gap-2 whitespace-nowrap"
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear All Data
+              </button>
+            </div>
+          </div>
+
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="text-[#1F2937] font-medium mb-1">Export All Data</h4>
+                <p className="text-[#6B7280] text-sm">
+                  Download a complete backup of all feedback data before clearing.
+                </p>
+              </div>
+              <button
+                onClick={handleExportData}
+                className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors flex items-center gap-2 whitespace-nowrap"
+              >
+                <Download className="h-4 w-4" />
+                Export Data
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Clear Data Confirmation Modal */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-red-100 rounded-full">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-[#1F2937]">Confirm Data Deletion</h3>
+                <p className="text-sm text-[#6B7280]">This action is permanent and cannot be undone</p>
+              </div>
+            </div>
+            
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+              <p className="text-red-800 text-sm">
+                <strong>Warning:</strong> This will permanently delete ALL feedback entries from the database. 
+                Make sure you have exported any data you need before proceeding.
+              </p>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm text-[#1F2937] mb-2">
+                Type <strong className="text-red-600">DELETE ALL</strong> to confirm:
+              </label>
+              <input
+                type="text"
+                value={clearConfirmText}
+                onChange={(e) => setClearConfirmText(e.target.value)}
+                placeholder="DELETE ALL"
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowClearConfirm(false);
+                  setClearConfirmText('');
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-[#1F2937] rounded-md hover:bg-gray-50 transition-colors"
+                disabled={clearingData}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleClearAllData}
+                disabled={clearConfirmText !== 'DELETE ALL' || clearingData}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {clearingData ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete All Data
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Save Button */}
       <div className="sticky bottom-0 bg-white rounded-lg shadow-md p-6 border border-gray-200">

@@ -28,7 +28,7 @@ router = APIRouter()
 @router.get("/", response_model=FeedbackListResponse)
 async def get_feedbacks(
     page: int = Query(1, ge=1),
-    page_size: int = Query(25, ge=1, le=100),
+    page_size: int = Query(25, ge=1, le=10000),
     search: Optional[str] = None,
     sentiment: Optional[str] = None,
     status: Optional[str] = None,
@@ -73,19 +73,21 @@ async def get_feedbacks(
     if date_from:
         try:
             from_date = datetime.fromisoformat(date_from)
-            query = query.filter(Feedback.created_at >= from_date)
+            query = query.filter(Feedback.feedback_date >= from_date)
         except:
             pass
     
     if date_to:
         try:
             to_date = datetime.fromisoformat(date_to)
-            query = query.filter(Feedback.created_at <= to_date)
+            # Add one day to include the entire end date
+            to_date = to_date.replace(hour=23, minute=59, second=59)
+            query = query.filter(Feedback.feedback_date <= to_date)
         except:
             pass
     
-    # Order by newest first
-    query = query.order_by(Feedback.created_at.desc())
+    # Order by feedback date (newest first)
+    query = query.order_by(Feedback.feedback_date.desc())
     
     # Get total count
     total = query.count()
@@ -100,6 +102,35 @@ async def get_feedbacks(
         "page": page,
         "page_size": page_size,
         "total_pages": (total + page_size - 1) // page_size
+    }
+
+
+@router.delete("/actions/clear-all")
+async def clear_all_feedback(
+    confirm: bool = Query(False, description="Must be true to confirm deletion"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_supervisor)
+):
+    """
+    Delete ALL feedback entries (Supervisor/Admin only)
+    Requires confirm=true to prevent accidental deletion
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please set confirm=true to confirm deletion of all feedback"
+        )
+    
+    # Count before deletion
+    total_count = db.query(Feedback).count()
+    
+    # Delete all feedback
+    db.query(Feedback).delete(synchronize_session=False)
+    db.commit()
+    
+    return {
+        "message": f"Successfully deleted all feedback entries",
+        "deleted_count": total_count
     }
 
 
@@ -308,33 +339,3 @@ async def bulk_update_status(
     db.commit()
     
     return {"message": f"Updated {updated_count} feedback entries"}
-
-
-@router.delete("/clear-all")
-async def clear_all_feedback(
-    confirm: bool = Query(False, description="Must be true to confirm deletion"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_supervisor)
-):
-    """
-    Delete ALL feedback entries (Supervisor/Admin only)
-    Requires confirm=true to prevent accidental deletion
-    """
-    if not confirm:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Please set confirm=true to confirm deletion of all feedback"
-        )
-    
-    # Count before deletion
-    total_count = db.query(Feedback).count()
-    
-    # Delete all feedback
-    db.query(Feedback).delete(synchronize_session=False)
-    db.commit()
-    
-    return {
-        "message": f"Successfully deleted all feedback entries",
-        "deleted_count": total_count
-    }
-

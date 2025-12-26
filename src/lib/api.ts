@@ -205,8 +205,8 @@ export const usersApi = {
 export const feedbackApi = {
   getAll: (params?: FeedbackQueryParams) => {
     const searchParams = new URLSearchParams();
-    if (params?.skip) searchParams.append('skip', params.skip.toString());
-    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.page) searchParams.append('page', params.page.toString());
+    if (params?.page_size) searchParams.append('page_size', params.page_size.toString());
     if (params?.sentiment) searchParams.append('sentiment', params.sentiment);
     if (params?.status) searchParams.append('status', params.status);
     if (params?.priority) searchParams.append('priority', params.priority);
@@ -250,7 +250,7 @@ export const feedbackApi = {
     }),
 
   clearAll: () =>
-    apiFetch<{ message: string; deleted_count: number }>('/feedback/clear-all?confirm=true', {
+    apiFetch<{ message: string; deleted_count: number }>('/feedback/actions/clear-all?confirm=true', {
       method: 'DELETE',
     }),
 };
@@ -509,8 +509,8 @@ export interface UpdateFeedbackRequest {
 }
 
 export interface FeedbackQueryParams {
-  skip?: number;
-  limit?: number;
+  page?: number;
+  page_size?: number;
   sentiment?: string;
   status?: string;
   priority?: string;
@@ -523,8 +523,9 @@ export interface FeedbackQueryParams {
 export interface PaginatedResponse<T> {
   items: T[];
   total: number;
-  skip: number;
-  limit: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 export interface DashboardStats {

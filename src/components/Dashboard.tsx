@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { MessageSquare, ThumbsUp, ThumbsDown, Minus, Eye, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle } from 'lucide-react';
+import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
-import { analyticsApi, feedbackApi, getAccessToken, TrendData, Feedback as ApiFeedback } from '../lib/api';
-import { Feedback } from '../types';
+import { analyticsApi, getAccessToken, TrendData } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
 interface DashboardProps {
-  onViewFeedback: (feedback: Feedback) => void;
   onNavigate?: (page: string, filters?: Record<string, string>) => void;
 }
 
@@ -36,30 +34,12 @@ interface ExtendedDashboardStats {
   last_updated?: string;
 }
 
-// Map API feedback to frontend type
-function mapApiFeedback(apiFeedback: ApiFeedback): Feedback {
-  return {
-    id: String(apiFeedback.id),
-    text: apiFeedback.text,
-    language: apiFeedback.language,
-    sentiment: apiFeedback.sentiment || 'neutral',
-    confidence: apiFeedback.sentiment_confidence || 0,
-    date: apiFeedback.feedback_date || apiFeedback.created_at,
-    source: apiFeedback.source,
-    flightNumber: apiFeedback.flight_number,
-    customerName: apiFeedback.customer_name,
-    customerEmail: apiFeedback.customer_email,
-    status: apiFeedback.status,
-  };
-}
-
-export function Dashboard({ onViewFeedback, onNavigate }: DashboardProps) {
+export function Dashboard({ onNavigate }: DashboardProps) {
   const { user } = useAuth();
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [sentimentFilter, setSentimentFilter] = useState('all');
   const [stats, setStats] = useState<ExtendedDashboardStats | null>(null);
   const [trends, setTrends] = useState<TrendData[]>([]);
-  const [recentFeedback, setRecentFeedback] = useState<Feedback[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +51,6 @@ export function Dashboard({ onViewFeedback, onNavigate }: DashboardProps) {
     const token = getAccessToken();
     if (!token) {
       console.log('No token available');
-      setRecentFeedback([]);
       setLoading(false);
       return;
     }
@@ -90,29 +69,21 @@ export function Dashboard({ onViewFeedback, onNavigate }: DashboardProps) {
       if (dateRange.to) statsParams.date_to = dateRange.to;
       if (sentimentFilter !== 'all') statsParams.sentiment = sentimentFilter;
 
-      // Build feedback query params
-      const feedbackParams: Record<string, string | number> = { limit: 10 };
-      if (sentimentFilter !== 'all') feedbackParams.sentiment = sentimentFilter;
-      if (dateRange.from) feedbackParams.date_from = dateRange.from;
-      if (dateRange.to) feedbackParams.date_to = dateRange.to;
-
-      // Fetch stats, trends, and recent feedback in parallel
-      const [statsData, trendsData, feedbackData] = await Promise.all([
+      // Fetch stats and trends in parallel
+      const [statsData, trendsData] = await Promise.all([
         analyticsApi.getStats(statsParams).catch(() => null),
         analyticsApi.getTrends({ days: 30 }).catch(() => []),
-        feedbackApi.getAll(feedbackParams).catch(() => ({ items: [], total: 0 })),
       ]);
 
       if (statsData) {
         setStats(statsData as ExtendedDashboardStats);
       }
+      console.log('Trends data received:', trendsData);
       setTrends(trendsData);
-      setRecentFeedback(feedbackData.items.map(mapApiFeedback));
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
       setError('Failed to load dashboard data. Please try again.');
-      setRecentFeedback([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -700,96 +671,7 @@ export function Dashboard({ onViewFeedback, onNavigate }: DashboardProps) {
             </div>
           </div>
 
-          {/* Recent Feedback Table */}
-          <div className="bg-white rounded-lg shadow-md border border-gray-200">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-[#1F2937]">Recent Feedback</h3>
-                <p className="text-sm text-[#6B7280]">Last 10 entries</p>
-              </div>
-              <button 
-                onClick={() => handleCardClick()}
-                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
-              >
-                View All
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wider">Date</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wider">Feedback Preview</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wider">Language</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wider">Sentiment</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wider">Confidence</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-[#6B7280] uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {recentFeedback.map((feedback) => (
-                    <tr key={feedback.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-[#1F2937]">
-                        {new Date(feedback.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-[#1F2937] max-w-md">
-                        <div className="truncate" title={feedback.text}>
-                          {feedback.text.substring(0, 80)}
-                          {feedback.text.length > 80 ? '...' : ''}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${getLanguageBadge(feedback.language)}`}>
-                          {feedback.language === 'AR' ? 'Arabic' : 'English'}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 rounded text-xs font-medium capitalize ${getSentimentColor(feedback.sentiment)}`}>
-                          {feedback.sentiment}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 bg-gray-200 rounded-full h-2 w-20">
-                            <div
-                              className="bg-blue-600 h-2 rounded-full transition-all"
-                              style={{ width: `${feedback.confidence}%` }}
-                            />
-                          </div>
-                          <span className="text-sm text-[#6B7280]">{Math.round(feedback.confidence)}%</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <button
-                          onClick={() => onViewFeedback(feedback)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                          title="View Details"
-                        >
-                          <Eye className="h-5 w-5" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {recentFeedback.length === 0 && !loading && (
-                    <tr>
-                      <td colSpan={6} className="px-6 py-12 text-center text-[#6B7280]">
-                        <div className="flex flex-col items-center">
-                          <MessageSquare className="h-12 w-12 mb-3 opacity-50" />
-                          <p className="mb-2">No feedback data available</p>
-                          <button
-                            onClick={handleUploadClick}
-                            className="text-[#003366] hover:underline font-medium"
-                          >
-                            Upload feedback to get started
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+
         </>
       )}
     </div>

@@ -59,16 +59,16 @@ export function Settings() {
       setClearConfirmText('');
       // Refresh the page to reflect changes
       setTimeout(() => window.location.reload(), 1000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Clear data error:', error);
-      console.error('Error type:', typeof error);
-      console.error('Error keys:', error ? Object.keys(error) : 'null');
       
       let errorMessage = 'Failed to clear data. Unknown error occurred.';
       
-      if (error instanceof ApiError) {
-        errorMessage = error.detail || error.message;
-        if (error.status === 403 || error.status === 401) {
+      // Check if error has ApiError-like properties (status, detail)
+      if (error && typeof error === 'object' && 'status' in error && 'detail' in error) {
+        const apiError = error as { status: number; detail: string; message?: string };
+        errorMessage = apiError.detail || apiError.message || 'API Error';
+        if (apiError.status === 403 || apiError.status === 401) {
           errorMessage = `Permission denied: ${errorMessage}\n\nOnly administrators and supervisors can clear all data.`;
         }
       } else if (error instanceof Error) {
@@ -76,7 +76,8 @@ export function Settings() {
       } else if (typeof error === 'string') {
         errorMessage = error;
       } else if (error && typeof error === 'object') {
-        errorMessage = error.detail || error.message || JSON.stringify(error);
+        const errObj = error as Record<string, unknown>;
+        errorMessage = String(errObj.detail || errObj.message || JSON.stringify(error));
       }
       
       alert(`❌ Error: ${errorMessage}`);

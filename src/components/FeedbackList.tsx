@@ -1,10 +1,27 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Download, FileText, Eye, Edit, Trash2, ChevronLeft, ChevronRight, X, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Search, Download, FileText, Eye, Edit, Trash2, ChevronLeft, ChevronRight, X, Loader2, AlertTriangle } from 'lucide-react';
 import { Feedback } from '../types';
-import { feedbackApi, getAccessToken, Feedback as ApiFeedback } from '../lib/api';
+import { feedbackApi, getAccessToken, Feedback as ApiFeedback, ApiError } from '../lib/api';
 
 interface FeedbackListProps {
   onViewFeedback: (feedback: Feedback) => void;
+}
+
+// Debounce hook
+function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
 }
 
 // Map API feedback to frontend type
@@ -34,11 +51,23 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
   
+  // Debounce search query to avoid too many API calls
+  const debouncedSearchQuery = useDebounce(searchQuery, 500);
+  
   // API state
   const [feedbackList, setFeedbackList] = useState<Feedback[]>([]);
   const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  
+  // Edit modal state
+  const [editingFeedback, setEditingFeedback] = useState<Feedback | null>(null);
+  const [editForm, setEditForm] = useState({ status: '', priority: '' });
+  const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   // Fetch feedback from API
   const fetchFeedback = useCallback(async () => {
@@ -57,13 +86,13 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
       setError(null);
 
       const params: Record<string, unknown> = {
-        skip: (currentPage - 1) * rowsPerPage,
-        limit: rowsPerPage,
+        page: currentPage,
+        page_size: rowsPerPage,
       };
 
       if (selectedSentiment !== 'all') params.sentiment = selectedSentiment;
       if (selectedLanguage !== 'all') params.language = selectedLanguage;
-      if (searchQuery) params.search = searchQuery;
+      if (debouncedSearchQuery.trim()) params.search = debouncedSearchQuery.trim();
       if (dateRange.from) params.date_from = dateRange.from;
       if (dateRange.to) params.date_to = dateRange.to;
 
@@ -78,7 +107,7 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, rowsPerPage, selectedSentiment, selectedLanguage, searchQuery, dateRange]);
+  }, [currentPage, rowsPerPage, selectedSentiment, selectedLanguage, debouncedSearchQuery, dateRange]);
 
   useEffect(() => {
     fetchFeedback();
@@ -87,7 +116,157 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedSentiment, selectedLanguage, searchQuery, dateRange]);
+  }, [selectedSentiment, selectedLanguage, debouncedSearchQuery, dateRange]);
+
+  // Delete single feedback
+  const handleDeleteFeedback = async (feedbackId: string) => {
+    try {
+      setDeleting(feedbackId);
+      await feedbackApi.delete(Number(feedbackId));
+      setShowDeleteConfirm(null);
+      // Refresh the list
+      await fetchFeedback();
+      alert('✅ Feedback deleted successfully!');
+    } catch (err) {
+      console.error('Delete error:', err);
+      if (err instanceof ApiError) {
+        alert(`❌ Failed to delete: ${err.detail}`);
+      } else {
+        alert('❌ Failed to delete feedback. Please try again.');
+      }
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  // Delete multiple selected feedbacks
+  const handleBulkDelete = async () => {
+    if (selectedItems.length === 0) {
+      alert('Please select feedback items to delete.');
+      return;
+    }
+
+    try {
+      setDeleting('bulk');
+      const ids = selectedItems.map(id => Number(id));
+      
+      // Delete each selected item
+      for (const id of ids) {
+        await feedbackApi.delete(id);
+      }
+      
+      setShowBulkDeleteConfirm(false);
+      setSelectedItems([]);
+      await fetchFeedback();
+      alert(`✅ Successfully deleted ${ids.length} feedback entries!`);
+    } catch (err) {
+      console.error('Bulk delete error:', err);
+      if (err instanceof ApiError) {
+        alert(`❌ Failed to delete: ${err.detail}`);
+      } else {
+        alert('❌ Failed to delete feedback. Please try again.');
+      }
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  // Edit feedback
+  const handleEditClick = (feedback: Feedback) => {
+    setEditingFeedback(feedback);
+    setEditForm({
+      status: feedback.status || 'pending',
+      priority: 'medium',
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingFeedback) return;
+    
+    try {
+      setSaving(true);
+      await feedbackApi.update(Number(editingFeedback.id), {
+        status: editForm.status,
+      });
+      setEditingFeedback(null);
+      await fetchFeedback();
+      alert('✅ Feedback updated successfully!');
+    } catch (err) {
+      console.error('Update error:', err);
+      if (err instanceof ApiError) {
+        alert(`❌ Failed to update: ${err.detail}`);
+      } else {
+        alert('❌ Failed to update feedback. Please try again.');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Export to Excel
+  const handleExportExcel = async () => {
+    try {
+      setExporting(true);
+      
+      // Fetch all data with current filters (up to 10000 records)
+      const params: Record<string, unknown> = {
+        page: 1,
+        page_size: 10000,
+      };
+      if (selectedSentiment !== 'all') params.sentiment = selectedSentiment;
+      if (selectedLanguage !== 'all') params.language = selectedLanguage;
+      if (debouncedSearchQuery.trim()) params.search = debouncedSearchQuery.trim();
+      if (dateRange.from) params.date_from = dateRange.from;
+      if (dateRange.to) params.date_to = dateRange.to;
+
+      const response = await feedbackApi.getAll(params);
+      const data = response.items;
+
+      // Create CSV content
+      const headers = ['ID', 'Date', 'Customer Name', 'Email', 'Flight', 'Feedback Text', 'Language', 'Sentiment', 'Confidence', 'Status', 'Source'];
+      const csvRows = [
+        headers.join(','),
+        ...data.map(item => [
+          item.id,
+          item.feedback_date || item.created_at,
+          `"${(item.customer_name || '').replace(/"/g, '""')}"`,
+          `"${(item.customer_email || '').replace(/"/g, '""')}"`,
+          item.flight_number || '',
+          `"${(item.text || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`,
+          item.language,
+          item.sentiment,
+          item.sentiment_confidence || 0,
+          item.status,
+          item.source
+        ].join(','))
+      ];
+
+      const csvContent = csvRows.join('\n');
+      const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `feedback_export_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      alert(`✅ Exported ${data.length} feedback entries!`);
+    } catch (err) {
+      console.error('Export error:', err);
+      if (err instanceof ApiError) {
+        alert(`❌ Export failed: ${err.detail}`);
+      } else if (err instanceof Error) {
+        alert(`❌ Export failed: ${err.message}`);
+      } else {
+        alert('❌ Failed to export data. Please try again.');
+      }
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const activeFilters = [];
   if (selectedSentiment !== 'all') activeFilters.push({ label: `Sentiment: ${selectedSentiment}`, key: 'sentiment' });
@@ -181,19 +360,25 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
           </div>
 
           {/* Filters */}
-          <div className="flex flex-wrap gap-2">
-            <input
-              type="date"
-              value={dateRange.from}
-              onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
-              className="h-10 px-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <input
-              type="date"
-              value={dateRange.to}
-              onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
-              className="h-10 px-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex items-center gap-1">
+              <span className="text-sm text-gray-500">From:</span>
+              <input
+                type="date"
+                value={dateRange.from}
+                onChange={(e) => setDateRange({ ...dateRange, from: e.target.value })}
+                className="h-10 px-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-sm text-gray-500">To:</span>
+              <input
+                type="date"
+                value={dateRange.to}
+                onChange={(e) => setDateRange({ ...dateRange, to: e.target.value })}
+                className="h-10 px-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
             <select
               value={selectedSentiment}
               onChange={(e) => setSelectedSentiment(e.target.value)}
@@ -218,13 +403,26 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
 
           {/* Action Buttons */}
           <div className="flex gap-2">
-            <button className="h-10 px-4 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center gap-2">
-              <Download className="h-4 w-4" />
-              <span className="hidden sm:inline">Export Excel</span>
-            </button>
-            <button className="h-10 px-4 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              <span className="hidden sm:inline">PDF Report</span>
+            {selectedItems.length > 0 && (
+              <button 
+                onClick={() => setShowBulkDeleteConfirm(true)}
+                className="h-10 px-4 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors flex items-center gap-2"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span className="hidden sm:inline">Delete ({selectedItems.length})</span>
+              </button>
+            )}
+            <button 
+              onClick={handleExportExcel}
+              disabled={exporting}
+              className="h-10 px-4 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center gap-2 disabled:opacity-50"
+            >
+              {exporting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              <span className="hidden sm:inline">{exporting ? 'Exporting...' : 'Export Excel'}</span>
             </button>
           </div>
         </div>
@@ -399,16 +597,23 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
                             <Eye className="h-4 w-4" />
                           </button>
                           <button
+                            onClick={() => handleEditClick(feedback)}
                             className="p-2 text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
                             title="Edit"
                           >
                             <Edit className="h-4 w-4" />
                           </button>
                           <button
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                            onClick={() => setShowDeleteConfirm(feedback.id)}
+                            disabled={deleting === feedback.id}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-50"
                             title="Delete"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            {deleting === feedback.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
                           </button>
                         </div>
                       </td>
@@ -505,6 +710,194 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
           >
             Clear Filters
           </button>
+        </div>
+      )}
+
+      {/* Edit Feedback Modal */}
+      {editingFeedback && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full mx-4">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-[#003366]">Edit Feedback</h3>
+                <button
+                  onClick={() => setEditingFeedback(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Feedback ID</label>
+                <input
+                  type="text"
+                  value={editingFeedback.id}
+                  disabled
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Feedback Text</label>
+                <textarea
+                  value={editingFeedback.text}
+                  disabled
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-100 text-gray-500 resize-none"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <select
+                  value={editForm.status}
+                  onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="resolved">Resolved</option>
+                  <option value="dismissed">Dismissed</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-4 pt-2">
+                <div>
+                  <span className="text-sm text-gray-500">Sentiment:</span>
+                  <span className={`ml-2 px-2 py-1 rounded text-xs capitalize ${
+                    editingFeedback.sentiment === 'positive' ? 'bg-green-100 text-green-800' :
+                    editingFeedback.sentiment === 'negative' ? 'bg-red-100 text-red-800' :
+                    'bg-amber-100 text-amber-800'
+                  }`}>
+                    {editingFeedback.sentiment}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-sm text-gray-500">Language:</span>
+                  <span className="ml-2 px-2 py-1 rounded text-xs bg-blue-100 text-blue-800">
+                    {editingFeedback.language}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+              <button
+                onClick={() => setEditingFeedback(null)}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={saving}
+                className="px-4 py-2 bg-[#003366] text-white rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-red-100 rounded-full">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-[#1F2937]">Delete Feedback</h3>
+                <p className="text-sm text-[#6B7280]">This action cannot be undone</p>
+              </div>
+            </div>
+            
+            <p className="text-[#6B7280] mb-4">
+              Are you sure you want to delete this feedback entry? This will permanently remove it from the database.
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(null)}
+                className="flex-1 px-4 py-2 border border-gray-300 text-[#1F2937] rounded-md hover:bg-gray-50 transition-colors"
+                disabled={deleting !== null}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteFeedback(showDeleteConfirm)}
+                disabled={deleting !== null}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Modal */}
+      {showBulkDeleteConfirm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-3 bg-red-100 rounded-full">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-[#1F2937]">Delete Multiple Feedback</h3>
+                <p className="text-sm text-[#6B7280]">This action cannot be undone</p>
+              </div>
+            </div>
+            
+            <p className="text-[#6B7280] mb-4">
+              Are you sure you want to delete <strong>{selectedItems.length}</strong> selected feedback entries?
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowBulkDeleteConfirm(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 text-[#1F2937] rounded-md hover:bg-gray-50 transition-colors"
+                disabled={deleting === 'bulk'}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkDelete}
+                disabled={deleting === 'bulk'}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {deleting === 'bulk' ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete All Selected
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

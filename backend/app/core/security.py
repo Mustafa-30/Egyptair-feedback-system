@@ -18,7 +18,7 @@ from app.models.user import User
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 scheme - use the form login endpoint for Swagger UI
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login/form")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login/form")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:

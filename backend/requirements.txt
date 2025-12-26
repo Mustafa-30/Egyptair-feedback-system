@@ -28,6 +28,7 @@ xlrd==2.0.1
 
 # NLP & Sentiment Analysis
 nltk==3.8.1
+scikit-learn==1.8.0
 transformers==4.36.2
 torch==2.1.2
 sentencepiece==0.1.99

@@ -60,8 +60,8 @@ export function Layout({ children, currentPage, onNavigate }: LayoutProps) {
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
-  // Add User Management for supervisors only
-  if (user?.role === 'supervisor') {
+  // Add User Management for admin and supervisors
+  if (user?.role === 'admin' || user?.role === 'supervisor') {
     menuItems.push({ id: 'users', label: 'User Management', icon: Users });
   }
 

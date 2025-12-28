@@ -590,38 +590,117 @@ export const filesApi = {
 };
 
 // Report API
+export interface ReportPreviewStats {
+  total_in_database: number;
+  matching_filters: number;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  positive_pct: number;
+  negative_pct: number;
+  neutral_pct: number;
+  date_range: {
+    from: string | null;
+    to: string | null;
+  };
+}
+
+export interface ReportGenerateResponse {
+  report_id: number;
+  title: string;
+  report_type: string;
+  file_format: string;
+  file_size: number;
+  file_size_mb: number;
+  total_records: number;
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  generated_at: string;
+  download_url: string;
+  status: string;
+}
+
+export interface ReportGenerateParams {
+  report_type: 'summary' | 'detailed';
+  title: string;
+  date_from?: string;
+  date_to?: string;
+  sentiments?: string; // comma-separated: positive,negative,neutral
+  languages?: string; // comma-separated: arabic,english
+  include_executive_summary?: boolean;
+  include_sentiment_chart?: boolean;
+  include_trend_chart?: boolean;
+  include_stats_table?: boolean;
+  include_negative_samples?: boolean;
+  include_logo?: boolean;
+  orientation?: 'portrait' | 'landscape';
+}
+
 export const reportsApi = {
   list: (params?: { page?: number; page_size?: number; report_type?: string; status?: string }) =>
     apiFetch<{ items: Report[]; total: number; page: number; page_size: number; total_pages: number }>(
-      `/v1/reports/?${new URLSearchParams(params as Record<string, string> || {}).toString()}`
+      `/reports/?${new URLSearchParams(params as Record<string, string> || {}).toString()}`
     ),
   
   get: (reportId: number) =>
-    apiFetch<Report>(`/v1/reports/${reportId}`),
+    apiFetch<Report>(`/reports/${reportId}`),
   
-  generate: (request: ReportGenerateRequest) =>
-    apiFetch<Report>('/v1/reports/generate', {
+  getPreview: (params: {
+    date_from?: string;
+    date_to?: string;
+    sentiments?: string;
+    languages?: string;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params.date_from) searchParams.append('date_from', params.date_from);
+    if (params.date_to) searchParams.append('date_to', params.date_to);
+    if (params.sentiments) searchParams.append('sentiments', params.sentiments);
+    if (params.languages) searchParams.append('languages', params.languages);
+    const query = searchParams.toString();
+    return apiFetch<ReportPreviewStats>(`/reports/preview${query ? `?${query}` : ''}`);
+  },
+  
+  generate: async (params: ReportGenerateParams): Promise<ReportGenerateResponse> => {
+    const searchParams = new URLSearchParams();
+    searchParams.append('report_type', params.report_type);
+    searchParams.append('title', params.title);
+    if (params.date_from) searchParams.append('date_from', params.date_from);
+    if (params.date_to) searchParams.append('date_to', params.date_to);
+    if (params.sentiments) searchParams.append('sentiments', params.sentiments);
+    if (params.languages) searchParams.append('languages', params.languages);
+    if (params.include_executive_summary !== undefined) 
+      searchParams.append('include_executive_summary', params.include_executive_summary.toString());
+    if (params.include_sentiment_chart !== undefined) 
+      searchParams.append('include_sentiment_chart', params.include_sentiment_chart.toString());
+    if (params.include_trend_chart !== undefined) 
+      searchParams.append('include_trend_chart', params.include_trend_chart.toString());
+    if (params.include_stats_table !== undefined) 
+      searchParams.append('include_stats_table', params.include_stats_table.toString());
+    if (params.include_negative_samples !== undefined) 
+      searchParams.append('include_negative_samples', params.include_negative_samples.toString());
+    if (params.include_logo !== undefined) 
+      searchParams.append('include_logo', params.include_logo.toString());
+    if (params.orientation) 
+      searchParams.append('orientation', params.orientation);
+    
+    return apiFetch<ReportGenerateResponse>(`/reports/generate?${searchParams.toString()}`, {
       method: 'POST',
-      body: JSON.stringify(request),
-    }),
+    });
+  },
   
-  getSummary: (reportId: number) =>
-    apiFetch<{ total_records: number; positive_count: number; positive_percentage: number; negative_count: number; negative_percentage: number; neutral_count: number; neutral_percentage: number }>(
-      `/v1/reports/${reportId}/summary`
-    ),
-  
-  export: (reportId: number, format: 'pdf' | 'excel' | 'csv' | 'json') =>
-    apiFetch<{ report_id: number; title: string; format: string; status: string; download_url: string }>(
-      `/v1/reports/${reportId}/export?format=${format}`,
-      { method: 'POST' }
-    ),
+  download: (reportId: number) => {
+    const token = getAccessToken();
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+    return `${API_BASE_URL}/reports/${reportId}/download?token=${token}`;
+  },
   
   delete: (reportId: number) =>
-    apiFetch<{ message: string; report_id: number }>(`/v1/reports/${reportId}`, { method: 'DELETE' }),
+    apiFetch<{ message: string; report_id: number }>(`/reports/${reportId}`, { method: 'DELETE' }),
   
   getOverview: () =>
-    apiFetch<{ total_reports: number; by_type: Record<string, number>; recent_reports: Array<{ report_id: number; title: string; created_at: string; status: string }> }>(
-      '/v1/reports/stats/overview'
+    apiFetch<{ total_reports: number; by_type: Record<string, number>; recent_reports: Array<{ report_id: number; title: string; created_at: string; status: string; download_url: string }> }>(
+      '/reports/stats/overview'
     ),
 };
 

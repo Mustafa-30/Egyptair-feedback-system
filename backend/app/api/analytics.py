@@ -345,3 +345,234 @@ async def get_analytics_summary(
         "pending_count": pending_count,
         "average_confidence": round(avg_confidence, 1)
     }
+
+
+@router.get("/top-complaints")
+async def get_top_complaints(
+    limit: int = Query(5, ge=1, le=20),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get top complaint categories from negative feedback
+    Extracts common keywords/themes from complaint texts
+    """
+    # Get negative feedback texts
+    negative_feedback = db.query(Feedback.text, Feedback.feedback_type).filter(
+        Feedback.sentiment == "negative"
+    ).limit(500).all()
+    
+    # Common complaint categories and their keywords
+    complaint_categories = {
+        "Delay/Cancellation": ["delay", "delayed", "cancel", "cancelled", "late", "wait", "hours", "تأخير", "إلغاء", "تأخر"],
+        "Lost Baggage": ["luggage", "baggage", "bag", "lost", "missing", "suitcase", "حقيبة", "أمتعة", "ضائعة"],
+        "Poor Service": ["rude", "unhelpful", "staff", "service", "attitude", "خدمة", "سيء", "موظف"],
+        "Seat Issues": ["seat", "uncomfortable", "space", "legroom", "cramped", "مقعد", "ضيق"],
+        "Food Quality": ["food", "meal", "cold", "taste", "quality", "طعام", "وجبة", "بارد"],
+        "Booking Problems": ["booking", "reservation", "website", "app", "حجز", "موقع", "تطبيق"],
+        "Refund Issues": ["refund", "money", "charge", "payment", "استرداد", "مال", "دفع"],
+        "Check-in Problems": ["check-in", "checkin", "counter", "queue", "line", "تسجيل", "طابور"],
+        "Communication": ["communication", "inform", "notification", "update", "تواصل", "إبلاغ"],
+        "Cleanliness": ["dirty", "clean", "hygiene", "toilet", "نظافة", "قذر", "حمام"]
+    }
+    
+    # Count occurrences of each category
+    category_counts = {cat: 0 for cat in complaint_categories}
+    
+    for feedback_text, _ in negative_feedback:
+        if feedback_text:
+            text_lower = feedback_text.lower()
+            for category, keywords in complaint_categories.items():
+                if any(keyword in text_lower for keyword in keywords):
+                    category_counts[category] += 1
+    
+    # Sort by count and get top N
+    sorted_complaints = sorted(
+        [{"category": cat, "count": count} for cat, count in category_counts.items() if count > 0],
+        key=lambda x: x["count"],
+        reverse=True
+    )[:limit]
+    
+    # Calculate percentages
+    total = sum(c["count"] for c in sorted_complaints)
+    for complaint in sorted_complaints:
+        complaint["percentage"] = round((complaint["count"] / total * 100) if total > 0 else 0, 1)
+    
+    return sorted_complaints
+
+
+@router.get("/feedback-by-route")
+async def get_feedback_by_route(
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get feedback distribution by flight routes (flight_number)
+    """
+    # Get feedback count by flight number with sentiment breakdown
+    results = db.query(
+        Feedback.flight_number,
+        Feedback.sentiment,
+        func.count(Feedback.id).label('count')
+    ).filter(
+        Feedback.flight_number.isnot(None),
+        Feedback.flight_number != ""
+    ).group_by(
+        Feedback.flight_number,
+        Feedback.sentiment
+    ).all()
+    
+    # Process into route-based format
+    routes = {}
+    for row in results:
+        route = row.flight_number
+        if route not in routes:
+            routes[route] = {
+                "route": route,
+                "total": 0,
+                "positive": 0,
+                "negative": 0,
+                "neutral": 0
+            }
+        routes[route]["total"] += row.count
+        if row.sentiment in ["positive", "negative", "neutral"]:
+            routes[route][row.sentiment] = row.count
+    
+    # Sort by total and get top N
+    sorted_routes = sorted(
+        routes.values(),
+        key=lambda x: x["total"],
+        reverse=True
+    )[:limit]
+    
+    return sorted_routes
+
+
+@router.get("/csat-score")
+async def get_csat_score(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Calculate Customer Satisfaction (CSAT) score based on positive feedback ratio
+    CSAT = (Positive Feedback / Total Feedback) * 100
+    """
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=days)
+    
+    # Get sentiment counts for the period
+    results = db.query(
+        Feedback.sentiment,
+        func.count(Feedback.id).label('count')
+    ).filter(
+        Feedback.created_at >= start_date
+    ).group_by(Feedback.sentiment).all()
+    
+    sentiment_dict = {r.sentiment: r.count for r in results if r.sentiment}
+    positive = sentiment_dict.get("positive", 0)
+    negative = sentiment_dict.get("negative", 0)
+    neutral = sentiment_dict.get("neutral", 0)
+    total = positive + negative + neutral
+    
+    # CSAT calculation (positive feedback percentage)
+    csat_score = round((positive / total * 100) if total > 0 else 0, 1)
+    
+    # Previous period for comparison
+    prev_start = start_date - timedelta(days=days)
+    prev_results = db.query(
+        Feedback.sentiment,
+        func.count(Feedback.id).label('count')
+    ).filter(
+        and_(Feedback.created_at >= prev_start, Feedback.created_at < start_date)
+    ).group_by(Feedback.sentiment).all()
+    
+    prev_dict = {r.sentiment: r.count for r in prev_results if r.sentiment}
+    prev_positive = prev_dict.get("positive", 0)
+    prev_total = sum(prev_dict.values())
+    prev_csat = round((prev_positive / prev_total * 100) if prev_total > 0 else 0, 1)
+    
+    # Calculate change
+    csat_change = round(csat_score - prev_csat, 1)
+    
+    return {
+        "csat_score": csat_score,
+        "previous_score": prev_csat,
+        "change": csat_change,
+        "positive_count": positive,
+        "total_count": total,
+        "period_days": days,
+        "grade": "Excellent" if csat_score >= 80 else "Good" if csat_score >= 60 else "Fair" if csat_score >= 40 else "Poor"
+    }
+
+
+@router.get("/response-time")
+async def get_response_time_metrics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get response time metrics for feedback handling
+    Calculates average time from creation to resolution
+    """
+    # Get resolved feedback with timestamps
+    resolved_feedback = db.query(Feedback).filter(
+        Feedback.status == "resolved",
+        Feedback.updated_at.isnot(None),
+        Feedback.created_at.isnot(None)
+    ).all()
+    
+    if not resolved_feedback:
+        return {
+            "average_response_hours": 0,
+            "average_response_days": 0,
+            "total_resolved": 0,
+            "resolved_today": 0,
+            "resolved_this_week": 0,
+            "performance_grade": "N/A"
+        }
+    
+    # Calculate response times
+    total_hours = 0
+    valid_count = 0
+    today = datetime.utcnow().date()
+    week_start = datetime.utcnow() - timedelta(days=7)
+    resolved_today = 0
+    resolved_this_week = 0
+    
+    for feedback in resolved_feedback:
+        if feedback.updated_at and feedback.created_at:
+            diff = feedback.updated_at - feedback.created_at
+            hours = diff.total_seconds() / 3600
+            if hours >= 0:  # Valid positive duration
+                total_hours += hours
+                valid_count += 1
+        
+        if feedback.updated_at:
+            if feedback.updated_at.date() == today:
+                resolved_today += 1
+            if feedback.updated_at >= week_start:
+                resolved_this_week += 1
+    
+    avg_hours = round(total_hours / valid_count, 1) if valid_count > 0 else 0
+    avg_days = round(avg_hours / 24, 1)
+    
+    # Performance grade based on response time
+    if avg_hours <= 24:
+        grade = "Excellent"
+    elif avg_hours <= 48:
+        grade = "Good"
+    elif avg_hours <= 72:
+        grade = "Fair"
+    else:
+        grade = "Needs Improvement"
+    
+    return {
+        "average_response_hours": avg_hours,
+        "average_response_days": avg_days,
+        "total_resolved": len(resolved_feedback),
+        "resolved_today": resolved_today,
+        "resolved_this_week": resolved_this_week,
+        "performance_grade": grade
+    }

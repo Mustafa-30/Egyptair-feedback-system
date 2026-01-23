@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
-import { analyticsApi, getAccessToken, TrendData } from '../lib/api';
+import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, Target, Plane, CheckCircle, TrendingDown } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
+import { analyticsApi, getAccessToken, TrendData, TopComplaint, RouteData, CsatData, ResponseTimeData } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
 interface DashboardProps {
@@ -34,12 +34,212 @@ interface ExtendedDashboardStats {
   last_updated?: string;
 }
 
+// CSAT Gauge Component
+function CSATGauge({ score, grade, change }: { score: number; grade: string; change: number }) {
+  const getGradeColor = () => {
+    if (score >= 80) return { bg: 'bg-green-500', text: 'text-green-600', light: 'bg-green-100' };
+    if (score >= 60) return { bg: 'bg-blue-500', text: 'text-blue-600', light: 'bg-blue-100' };
+    if (score >= 40) return { bg: 'bg-yellow-500', text: 'text-yellow-600', light: 'bg-yellow-100' };
+    return { bg: 'bg-red-500', text: 'text-red-600', light: 'bg-red-100' };
+  };
+  
+  const colors = getGradeColor();
+  const circumference = 2 * Math.PI * 60;
+  const strokeDasharray = (score / 100) * circumference;
+  
+  return (
+    <div className="flex flex-col items-center justify-center p-4">
+      <div className="relative w-36 h-36">
+        <svg className="w-full h-full transform -rotate-90" viewBox="0 0 140 140">
+          <circle cx="70" cy="70" r="60" fill="none" stroke="#E5E7EB" strokeWidth="12" />
+          <circle
+            cx="70" cy="70" r="60" fill="none"
+            stroke={score >= 80 ? '#10B981' : score >= 60 ? '#3B82F6' : score >= 40 ? '#F59E0B' : '#EF4444'}
+            strokeWidth="12" strokeLinecap="round"
+            strokeDasharray={`${strokeDasharray} ${circumference}`}
+            className="transition-all duration-1000 ease-out"
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className={`text-3xl font-bold ${colors.text}`}>{score}%</span>
+          <span className="text-xs text-gray-500">CSAT</span>
+        </div>
+      </div>
+      <div className="mt-3 text-center">
+        <span className={`px-3 py-1 rounded-full text-sm font-medium ${colors.light} ${colors.text}`}>{grade}</span>
+        <div className={`mt-2 text-sm flex items-center justify-center gap-1 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+          {change >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+          <span>{change >= 0 ? '+' : ''}{change}% vs last period</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Language Progress Bars Component
+function LanguageProgressBars({ arabic, english }: { arabic: number; english: number }) {
+  const total = arabic + english || 1;
+  const arabicPct = Math.round((arabic / total) * 100);
+  const englishPct = Math.round((english / total) * 100);
+  
+  return (
+    <div className="space-y-4 p-4">
+      <div>
+        <div className="flex justify-between items-center mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🇪🇬</span>
+            <span className="font-medium text-gray-700">Arabic</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500">{arabic.toLocaleString()}</span>
+            <span className="text-sm font-medium text-blue-600">{arabicPct}%</span>
+          </div>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-3">
+          <div className="h-3 rounded-full bg-gradient-to-r from-blue-400 to-blue-600 transition-all duration-500" style={{ width: `${arabicPct}%` }} />
+        </div>
+      </div>
+      <div>
+        <div className="flex justify-between items-center mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🇬🇧</span>
+            <span className="font-medium text-gray-700">English</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500">{english.toLocaleString()}</span>
+            <span className="text-sm font-medium text-purple-600">{englishPct}%</span>
+          </div>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-3">
+          <div className="h-3 rounded-full bg-gradient-to-r from-purple-400 to-purple-600 transition-all duration-500" style={{ width: `${englishPct}%` }} />
+        </div>
+      </div>
+      <div className="pt-3 border-t border-gray-200">
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-gray-500">Total Feedback</span>
+          <span className="font-semibold text-gray-700">{total.toLocaleString()}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Top Complaints Component
+function TopComplaints({ data, onViewAll }: { data: TopComplaint[]; onViewAll?: () => void }) {
+  const colors = ['#EF4444', '#F59E0B', '#3B82F6', '#10B981', '#8B5CF6'];
+  return (
+    <div className="space-y-3 p-4">
+      {data.length === 0 ? (
+        <div className="text-center py-6 text-gray-500">
+          <AlertTriangle className="h-8 w-8 mx-auto mb-2 opacity-50" />
+          <p>No complaint data available</p>
+        </div>
+      ) : (
+        <>
+          {data.map((item, index) => (
+            <div key={item.category} className="flex items-center gap-3">
+              <div className="w-2 h-8 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
+              <div className="flex-1">
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-sm font-medium text-gray-700">{item.category}</span>
+                  <span className="text-sm text-gray-500">{item.count}</span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2">
+                  <div className="h-2 rounded-full transition-all duration-500" style={{ width: `${item.percentage}%`, backgroundColor: colors[index % colors.length] }} />
+                </div>
+              </div>
+              <span className="text-xs text-gray-400 w-10 text-right">{item.percentage}%</span>
+            </div>
+          ))}
+          {onViewAll && (
+            <button onClick={onViewAll} className="w-full mt-2 py-2 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors">
+              View All Complaints →
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Response Time Card Component
+function ResponseTimeCard({ data }: { data: ResponseTimeData | null }) {
+  if (!data) return <div className="flex items-center justify-center h-full text-gray-500"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+  
+  const getGradeColor = () => {
+    switch (data.performance_grade) {
+      case 'Excellent': return 'bg-green-100 text-green-700';
+      case 'Good': return 'bg-blue-100 text-blue-700';
+      case 'Fair': return 'bg-yellow-100 text-yellow-700';
+      default: return 'bg-red-100 text-red-700';
+    }
+  };
+  
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-gray-500">Avg Response Time</p>
+          <p className="text-2xl font-bold text-gray-900">
+            {data.average_response_hours < 24 ? `${data.average_response_hours} hrs` : `${data.average_response_days} days`}
+          </p>
+        </div>
+        <span className={`px-3 py-1 rounded-full text-sm font-medium ${getGradeColor()}`}>{data.performance_grade}</span>
+      </div>
+      <div className="grid grid-cols-3 gap-3 pt-3 border-t border-gray-200">
+        <div className="text-center">
+          <p className="text-lg font-semibold text-gray-900">{data.total_resolved}</p>
+          <p className="text-xs text-gray-500">Total Resolved</p>
+        </div>
+        <div className="text-center">
+          <p className="text-lg font-semibold text-green-600">{data.resolved_today}</p>
+          <p className="text-xs text-gray-500">Today</p>
+        </div>
+        <div className="text-center">
+          <p className="text-lg font-semibold text-blue-600">{data.resolved_this_week}</p>
+          <p className="text-xs text-gray-500">This Week</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Feedback by Route Chart
+function FeedbackByRouteChart({ data }: { data: RouteData[] }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[250px] text-gray-500">
+        <Plane className="h-12 w-12 mb-2 opacity-50" />
+        <p>No route data available</p>
+      </div>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={250}>
+      <BarChart data={data.slice(0, 8)} layout="vertical">
+        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+        <XAxis type="number" stroke="#6B7280" fontSize={12} />
+        <YAxis type="category" dataKey="route" stroke="#6B7280" fontSize={11} width={70} />
+        <Tooltip formatter={(value: number, name: string) => [value, name.charAt(0).toUpperCase() + name.slice(1)]} contentStyle={{ borderRadius: '8px' }} />
+        <Legend />
+        <Bar dataKey="positive" stackId="a" fill="#10B981" name="Positive" />
+        <Bar dataKey="neutral" stackId="a" fill="#F59E0B" name="Neutral" />
+        <Bar dataKey="negative" stackId="a" fill="#EF4444" name="Negative" />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 export function Dashboard({ onNavigate }: DashboardProps) {
   const { user } = useAuth();
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [sentimentFilter, setSentimentFilter] = useState('all');
   const [stats, setStats] = useState<ExtendedDashboardStats | null>(null);
   const [trends, setTrends] = useState<TrendData[]>([]);
+  const [topComplaints, setTopComplaints] = useState<TopComplaint[]>([]);
+  const [routeData, setRouteData] = useState<RouteData[]>([]);
+  const [csatData, setCsatData] = useState<CsatData | null>(null);
+  const [responseTimeData, setResponseTimeData] = useState<ResponseTimeData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,10 +269,14 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       if (dateRange.to) statsParams.date_to = dateRange.to;
       if (sentimentFilter !== 'all') statsParams.sentiment = sentimentFilter;
 
-      // Fetch stats and trends in parallel
-      const [statsData, trendsData] = await Promise.all([
+      // Fetch all data in parallel
+      const [statsData, trendsData, complaintsData, routesData, csatResult, responseData] = await Promise.all([
         analyticsApi.getStats(statsParams).catch(() => null),
         analyticsApi.getTrends({ days: 30 }).catch(() => []),
+        analyticsApi.getTopComplaints(5).catch(() => []),
+        analyticsApi.getFeedbackByRoute(8).catch(() => []),
+        analyticsApi.getCsatScore(30).catch(() => null),
+        analyticsApi.getResponseTime().catch(() => null),
       ]);
 
       if (statsData) {
@@ -80,6 +284,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       }
       console.log('Trends data received:', trendsData);
       setTrends(trendsData);
+      setTopComplaints(complaintsData);
+      setRouteData(routesData);
+      setCsatData(csatResult);
+      setResponseTimeData(responseData);
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -142,6 +350,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     if (onNavigate) onNavigate('reports');
   };
 
+  const handleViewComplaints = () => {
+    if (onNavigate) onNavigate('feedback', { sentiment: 'negative' });
+  };
+
   // Use API stats - show zeros when no data
   const displayStats = {
     total_feedback: stats?.total_feedback ?? 0,
@@ -166,38 +378,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     { name: 'Neutral', value: displayStats.neutral_count, color: '#F59E0B' },
   ];
 
-  // Language distribution data
-  const languageData = stats?.language_distribution ? [
-    { name: 'Arabic', value: stats.language_distribution.arabic, color: '#3B82F6' },
-    { name: 'English', value: stats.language_distribution.english, color: '#8B5CF6' },
-  ] : [];
-
-  // Priority distribution data
-  const priorityData = stats?.priority_distribution ? [
-    { name: 'Urgent', value: stats.priority_distribution.urgent, fill: '#DC2626' },
-    { name: 'High', value: stats.priority_distribution.high, fill: '#F59E0B' },
-    { name: 'Medium', value: stats.priority_distribution.medium, fill: '#3B82F6' },
-    { name: 'Low', value: stats.priority_distribution.low, fill: '#10B981' },
-  ] : [];
-
   const displayTrends = trends;
-
-  const getSentimentColor = (sentiment: string) => {
-    switch (sentiment) {
-      case 'positive':
-        return 'bg-green-100 text-green-800';
-      case 'negative':
-        return 'bg-red-100 text-red-800';
-      case 'neutral':
-        return 'bg-amber-100 text-amber-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getLanguageBadge = (language: string) => {
-    return language === 'AR' ? 'bg-blue-100 text-blue-800' : 'bg-purple-100 text-purple-800';
-  };
 
   const formatLastUpdated = () => {
     if (!lastUpdated) return '';
@@ -369,19 +550,34 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             </div>
           </div>
 
-          {/* Additional Metrics Row */}
+          {/* KPI Cards Row 2 - CSAT, Response Time, Pending, Resolution */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Average Confidence */}
-            <div className="bg-white rounded-lg shadow-sm p-4 border border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-[#6B7280] uppercase tracking-wide">Avg Confidence</p>
-                  <p className="text-xl font-semibold text-[#1F2937]">{displayStats.average_confidence}%</p>
-                </div>
-                <div className="w-12 h-12 bg-blue-50 rounded-full flex items-center justify-center">
-                  <span className="text-blue-600 font-bold">{Math.round(displayStats.average_confidence)}</span>
+            {/* CSAT Score Gauge */}
+            <div className="bg-white rounded-lg shadow-md border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <Target className="h-5 w-5 text-green-600" />
+                  <h3 className="font-semibold text-gray-900">Customer Satisfaction</h3>
                 </div>
               </div>
+              {csatData ? (
+                <CSATGauge score={csatData.csat_score} grade={csatData.grade} change={csatData.change} />
+              ) : (
+                <div className="flex items-center justify-center h-48 text-gray-400">
+                  <Loader2 className="h-6 w-6 animate-spin" />
+                </div>
+              )}
+            </div>
+
+            {/* Response Time */}
+            <div className="bg-white rounded-lg shadow-md border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-5 w-5 text-blue-600" />
+                  <h3 className="font-semibold text-gray-900">Response Performance</h3>
+                </div>
+              </div>
+              <ResponseTimeCard data={responseTimeData} />
             </div>
 
             {/* Pending */}
@@ -389,10 +585,11 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs text-[#6B7280] uppercase tracking-wide">Pending Review</p>
-                  <p className="text-xl font-semibold text-[#1F2937]">{displayStats.pending_count}</p>
+                  <p className="text-2xl font-bold text-[#1F2937] mt-1">{displayStats.pending_count}</p>
+                  <p className="text-sm text-orange-600 mt-1">Awaiting action</p>
                 </div>
-                <div className="w-12 h-12 bg-orange-50 rounded-full flex items-center justify-center">
-                  <Clock className="h-5 w-5 text-orange-500" />
+                <div className="w-14 h-14 bg-orange-50 rounded-full flex items-center justify-center">
+                  <Clock className="h-7 w-7 text-orange-500" />
                 </div>
               </div>
             </div>
@@ -402,30 +599,11 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-xs text-[#6B7280] uppercase tracking-wide">Resolution Rate</p>
-                  <p className="text-xl font-semibold text-[#1F2937]">{displayStats.resolution_rate}%</p>
+                  <p className="text-2xl font-bold text-[#1F2937] mt-1">{displayStats.resolution_rate}%</p>
+                  <p className="text-sm text-green-600 mt-1">Issues resolved</p>
                 </div>
-                <div className="w-12 h-12 bg-green-50 rounded-full flex items-center justify-center">
-                  <TrendingUp className="h-5 w-5 text-green-500" />
-                </div>
-              </div>
-            </div>
-
-            {/* Language Split */}
-            <div className="bg-white rounded-lg shadow-sm p-4 border border-gray-200">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs text-[#6B7280] uppercase tracking-wide">Languages</p>
-                  <div className="flex gap-2 mt-1">
-                    <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">
-                      AR: {stats?.language_distribution?.arabic || 0}
-                    </span>
-                    <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
-                      EN: {stats?.language_distribution?.english || 0}
-                    </span>
-                  </div>
-                </div>
-                <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center">
-                  <Globe className="h-5 w-5 text-indigo-500" />
+                <div className="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center">
+                  <CheckCircle className="h-7 w-7 text-green-500" />
                 </div>
               </div>
             </div>
@@ -583,11 +761,11 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               )}
             </div>
 
-            {/* Sentiment Trends */}
+            {/* Sentiment Trends - Enhanced Area Chart */}
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
               <div className="mb-4">
                 <h3 className="text-lg font-semibold text-[#1F2937]">Sentiment Trends</h3>
-                <p className="text-sm text-[#6B7280]">Daily sentiment counts</p>
+                <p className="text-sm text-[#6B7280]">Daily sentiment counts over time</p>
               </div>
               {displayTrends.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-[300px] text-[#6B7280]">
@@ -596,79 +774,75 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={displayTrends}>
+                  <AreaChart data={displayTrends}>
+                    <defs>
+                      <linearGradient id="colorPositive" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorNegative" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#EF4444" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#EF4444" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorNeutral" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#F59E0B" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                     <XAxis dataKey="date" stroke="#6B7280" fontSize={12} />
                     <YAxis stroke="#6B7280" fontSize={12} />
-                    <Tooltip />
+                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #E5E7EB' }} />
                     <Legend />
-                    <Line type="monotone" dataKey="positive" stroke="#10B981" strokeWidth={2} name="Positive" dot={false} />
-                    <Line type="monotone" dataKey="negative" stroke="#EF4444" strokeWidth={2} name="Negative" dot={false} />
-                    <Line type="monotone" dataKey="neutral" stroke="#F59E0B" strokeWidth={2} name="Neutral" dot={false} />
-                  </LineChart>
+                    <Area type="monotone" dataKey="positive" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorPositive)" name="Positive" />
+                    <Area type="monotone" dataKey="negative" stroke="#EF4444" strokeWidth={2} fillOpacity={1} fill="url(#colorNegative)" name="Negative" />
+                    <Area type="monotone" dataKey="neutral" stroke="#F59E0B" strokeWidth={2} fillOpacity={1} fill="url(#colorNeutral)" name="Neutral" />
+                  </AreaChart>
                 </ResponsiveContainer>
               )}
             </div>
           </div>
 
-          {/* Charts Row 2 - Language and Priority */}
+          {/* Charts Row 2 - Language Distribution & Top Complaints */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Language Distribution */}
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
-              <div className="mb-4">
-                <h3 className="text-lg font-semibold text-[#1F2937]">Language Distribution</h3>
-                <p className="text-sm text-[#6B7280]">Arabic vs English feedback</p>
-              </div>
-              {languageData.length === 0 || (languageData[0].value === 0 && languageData[1].value === 0) ? (
-                <div className="flex flex-col items-center justify-center h-[250px] text-[#6B7280]">
-                  <Globe className="h-12 w-12 mb-2 opacity-50" />
-                  <p>No language data available</p>
+            {/* Language Distribution - Progress Bars */}
+            <div className="bg-white rounded-lg shadow-md border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <Globe className="h-5 w-5 text-indigo-600" />
+                  <h3 className="text-lg font-semibold text-[#1F2937]">Language Distribution</h3>
                 </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={250}>
-                  <PieChart>
-                    <Pie
-                      data={languageData}
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={80}
-                      dataKey="value"
-                      label={({ name, value }) => `${name}: ${value}`}
-                    >
-                      {languageData.map((entry, index) => (
-                        <Cell key={`lang-cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
+                <p className="text-sm text-[#6B7280] mt-1">Arabic vs English feedback</p>
+              </div>
+              <LanguageProgressBars 
+                arabic={stats?.language_distribution?.arabic || 0}
+                english={stats?.language_distribution?.english || 0}
+              />
             </div>
 
-            {/* Priority Distribution */}
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
-              <div className="mb-4">
-                <h3 className="text-lg font-semibold text-[#1F2937]">Priority Distribution</h3>
-                <p className="text-sm text-[#6B7280]">Feedback by priority level</p>
-              </div>
-              {priorityData.length === 0 || priorityData.every(p => p.value === 0) ? (
-                <div className="flex flex-col items-center justify-center h-[250px] text-[#6B7280]">
-                  <AlertTriangle className="h-12 w-12 mb-2 opacity-50" />
-                  <p>No priority data available</p>
+            {/* Top Complaints */}
+            <div className="bg-white rounded-lg shadow-md border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="h-5 w-5 text-red-500" />
+                  <h3 className="text-lg font-semibold text-[#1F2937]">Top Complaint Categories</h3>
                 </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={250}>
-                  <BarChart data={priorityData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                    <XAxis type="number" stroke="#6B7280" fontSize={12} />
-                    <YAxis type="category" dataKey="name" stroke="#6B7280" fontSize={12} width={60} />
-                    <Tooltip />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
+                <p className="text-sm text-[#6B7280] mt-1">Most common issues from negative feedback</p>
+              </div>
+              <TopComplaints data={topComplaints} onViewAll={handleViewComplaints} />
             </div>
+          </div>
+
+          {/* Charts Row 3 - Feedback by Route */}
+          <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
+            <div className="mb-4">
+              <div className="flex items-center gap-2">
+                <Plane className="h-5 w-5 text-blue-600" />
+                <h3 className="text-lg font-semibold text-[#1F2937]">Feedback by Flight Route</h3>
+              </div>
+              <p className="text-sm text-[#6B7280] mt-1">Sentiment breakdown by flight number</p>
+            </div>
+            <FeedbackByRouteChart data={routeData} />
           </div>
 
 

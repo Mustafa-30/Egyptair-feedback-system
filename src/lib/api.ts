@@ -2,7 +2,7 @@
  * API Client for Backend Communication
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
 
 const TOKEN_KEY = 'access_token';
 const TOKEN_EXPIRY_KEY = 'token_expiry';
@@ -278,6 +278,23 @@ export const analyticsApi = {
   },
 
   getCharts: () => apiFetch<ChartData>('/analytics/summary'),
+
+  getTopComplaints: (limit?: number) => {
+    const query = limit ? `?limit=${limit}` : '';
+    return apiFetch<TopComplaint[]>(`/analytics/top-complaints${query}`);
+  },
+
+  getFeedbackByRoute: (limit?: number) => {
+    const query = limit ? `?limit=${limit}` : '';
+    return apiFetch<RouteData[]>(`/analytics/feedback-by-route${query}`);
+  },
+
+  getCsatScore: (days?: number) => {
+    const query = days ? `?days=${days}` : '';
+    return apiFetch<CsatData>(`/analytics/csat-score${query}`);
+  },
+
+  getResponseTime: () => apiFetch<ResponseTimeData>('/analytics/response-time'),
 };
 
 // Upload API
@@ -553,6 +570,40 @@ export interface ChartData {
   source_distribution: Array<{ name: string; value: number }>;
   language_distribution: Array<{ name: string; value: number }>;
   status_distribution: Array<{ name: string; value: number }>;
+}
+
+// New analytics interfaces for enhanced dashboard
+export interface TopComplaint {
+  category: string;
+  count: number;
+  percentage: number;
+}
+
+export interface RouteData {
+  route: string;
+  total: number;
+  positive: number;
+  negative: number;
+  neutral: number;
+}
+
+export interface CsatData {
+  csat_score: number;
+  previous_score: number;
+  change: number;
+  positive_count: number;
+  total_count: number;
+  period_days: number;
+  grade: string;
+}
+
+export interface ResponseTimeData {
+  average_response_hours: number;
+  average_response_days: number;
+  total_resolved: number;
+  resolved_today: number;
+  resolved_this_week: number;
+  performance_grade: string;
 }
 
 // ===============================

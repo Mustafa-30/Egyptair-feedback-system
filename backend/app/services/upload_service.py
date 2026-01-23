@@ -13,6 +13,59 @@ from app.core.config import settings
 from app.services.sentiment_service import sentiment_analyzer
 
 
+def auto_prioritize(text: str, sentiment: str, confidence: float) -> str:
+    """
+    Auto-assign priority based on sentiment, confidence, and keywords.
+    
+    Priority levels:
+    - urgent: Very negative with high confidence + critical keywords
+    - high: Negative with high confidence or urgent keywords
+    - medium: Negative with lower confidence, neutral, or mixed signals
+    - low: Positive feedback or minor issues
+    """
+    text_lower = text.lower()
+    
+    # Urgent keywords (require immediate attention)
+    urgent_keywords = [
+        'danger', 'unsafe', 'emergency', 'injured', 'lawsuit', 'legal', 'lawyer',
+        'refund now', 'compensation', 'worst ever', 'never again', 'report to',
+        'media', 'news', 'tweet', 'social media', 'viral', 'health hazard',
+        'خطير', 'طوارئ', 'محامي', 'قانوني', 'أسوأ', 'تعويض', 'إعلام'
+    ]
+    
+    # High priority keywords
+    high_keywords = [
+        'lost baggage', 'luggage lost', 'missing bag', 'delayed hours', 'cancelled',
+        'missed connection', 'refund', 'very disappointed', 'terrible', 'horrible',
+        'unacceptable', 'disgusting', 'rude staff', 'worst', 'outrageous',
+        'حقيبة مفقودة', 'أمتعة ضائعة', 'ملغي', 'استرداد', 'سيء جدا', 'فظيع'
+    ]
+    
+    # Check for urgent keywords
+    has_urgent = any(keyword in text_lower for keyword in urgent_keywords)
+    has_high = any(keyword in text_lower for keyword in high_keywords)
+    
+    # Priority determination logic
+    if sentiment == "negative":
+        if has_urgent or (confidence >= 90 and has_high):
+            return "urgent"
+        elif has_high or confidence >= 80:
+            return "high"
+        elif confidence >= 60:
+            return "medium"
+        else:
+            return "low"
+    elif sentiment == "neutral":
+        if has_urgent:
+            return "high"
+        elif has_high:
+            return "medium"
+        else:
+            return "low"
+    else:  # positive
+        return "low"
+
+
 class UploadService:
     """
     Service for processing uploaded files (CSV, Excel)
@@ -228,16 +281,26 @@ class UploadService:
             # Analyze sentiment if requested
             if analyze_sentiment:
                 analysis = sentiment_analyzer.analyze(text)
+                
+                # Auto-assign priority based on sentiment and content
+                priority = auto_prioritize(
+                    text, 
+                    analysis["sentiment"], 
+                    analysis["confidence"]
+                )
+                
                 feedback_data.update({
                     "sentiment": analysis["sentiment"],
                     "sentiment_confidence": analysis["confidence"],
                     "language": specified_language or analysis["language"],  # Use specified or auto-detected
                     "preprocessed_text": analysis["preprocessed_text"],
                     "model_version": analysis["model_version"],
-                    "analyzed_at": datetime.utcnow().isoformat()
+                    "analyzed_at": datetime.utcnow().isoformat(),
+                    "priority": priority  # Auto-assigned priority
                 })
             elif specified_language:
                 feedback_data["language"] = specified_language
+                feedback_data["priority"] = "medium"  # Default priority when not analyzing
             
             results.append(feedback_data)
         

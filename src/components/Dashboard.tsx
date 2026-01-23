@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
-import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, Target, Plane, CheckCircle, TrendingDown } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, Target, Plane, CheckCircle, TrendingDown, Download, BarChart3, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
-import { analyticsApi, getAccessToken, TrendData, TopComplaint, RouteData, CsatData, ResponseTimeData } from '../lib/api';
+import { analyticsApi, getAccessToken, TrendData, TopComplaint, RouteData, CsatData, ResponseTimeData, ComparisonData } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
 interface DashboardProps {
@@ -240,11 +240,17 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const [routeData, setRouteData] = useState<RouteData[]>([]);
   const [csatData, setCsatData] = useState<CsatData | null>(null);
   const [responseTimeData, setResponseTimeData] = useState<ResponseTimeData | null>(null);
+  const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null);
+  const [showComparison, setShowComparison] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
+  
+  // Refs for chart export
+  const sentimentChartRef = useRef<HTMLDivElement>(null);
+  const trendsChartRef = useRef<HTMLDivElement>(null);
 
   // Fetch dashboard data
   const fetchData = useCallback(async (showRefreshing = false) => {
@@ -270,13 +276,14 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       if (sentimentFilter !== 'all') statsParams.sentiment = sentimentFilter;
 
       // Fetch all data in parallel
-      const [statsData, trendsData, complaintsData, routesData, csatResult, responseData] = await Promise.all([
+      const [statsData, trendsData, complaintsData, routesData, csatResult, responseData, comparisonResult] = await Promise.all([
         analyticsApi.getStats(statsParams).catch(() => null),
         analyticsApi.getTrends({ days: 30 }).catch(() => []),
         analyticsApi.getTopComplaints(5).catch(() => []),
         analyticsApi.getFeedbackByRoute(8).catch(() => []),
         analyticsApi.getCsatScore(30).catch(() => null),
         analyticsApi.getResponseTime().catch(() => null),
+        analyticsApi.getComparison(30).catch(() => null),
       ]);
 
       if (statsData) {
@@ -288,6 +295,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       setRouteData(routesData);
       setCsatData(csatResult);
       setResponseTimeData(responseData);
+      setComparisonData(comparisonResult);
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -352,6 +360,44 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
   const handleViewComplaints = () => {
     if (onNavigate) onNavigate('feedback', { sentiment: 'negative' });
+  };
+
+  // Export chart as image
+  const exportChartAsImage = async (chartRef: React.RefObject<HTMLDivElement>, filename: string) => {
+    if (!chartRef.current) return;
+    
+    try {
+      // Use html2canvas dynamically - fallback to simpler method if not available
+      const element = chartRef.current;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      // Get SVG element from Recharts
+      const svg = element.querySelector('svg');
+      if (svg && ctx) {
+        const svgData = new XMLSerializer().serializeToString(svg);
+        const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(svgBlob);
+        
+        const img = new Image();
+        img.onload = () => {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.fillStyle = 'white';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+          
+          const link = document.createElement('a');
+          link.download = `${filename}.png`;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+          URL.revokeObjectURL(url);
+        };
+        img.src = url;
+      }
+    } catch (err) {
+      console.error('Error exporting chart:', err);
+    }
   };
 
   // Use API stats - show zeros when no data
@@ -445,6 +491,17 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           <FileText className="h-4 w-4" />
           Generate Report
         </button>
+        <button
+          onClick={() => setShowComparison(!showComparison)}
+          className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
+            showComparison 
+              ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' 
+              : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          <BarChart3 className="h-4 w-4" />
+          {showComparison ? 'Hide Comparison' : 'Compare Periods'}
+        </button>
       </div>
 
       {/* Loading State */}
@@ -471,6 +528,92 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
       {!loading && (
         <>
+          {/* Comparison Panel */}
+          {showComparison && comparisonData && (
+            <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg shadow-md p-6 border border-indigo-200">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-indigo-900 flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5" />
+                  Period Comparison (Last {comparisonData.period_days} days vs Previous)
+                </h3>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {/* Total */}
+                <div className="bg-white rounded-lg p-4 text-center">
+                  <p className="text-xs text-gray-500 uppercase mb-1">Total</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl font-bold">{comparisonData.current_period.stats.total}</span>
+                    <span className={`text-xs flex items-center ${comparisonData.changes.total.direction === 'up' ? 'text-green-600' : 'text-red-600'}`}>
+                      {comparisonData.changes.total.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                      {Math.abs(comparisonData.changes.total.value)}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.total}</p>
+                </div>
+                {/* Positive */}
+                <div className="bg-white rounded-lg p-4 text-center">
+                  <p className="text-xs text-gray-500 uppercase mb-1">Positive</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl font-bold text-green-600">{comparisonData.current_period.stats.positive}</span>
+                    <span className={`text-xs flex items-center ${comparisonData.changes.positive.direction === 'up' ? 'text-green-600' : 'text-red-600'}`}>
+                      {comparisonData.changes.positive.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                      {Math.abs(comparisonData.changes.positive.value)}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.positive}</p>
+                </div>
+                {/* Negative */}
+                <div className="bg-white rounded-lg p-4 text-center">
+                  <p className="text-xs text-gray-500 uppercase mb-1">Negative</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl font-bold text-red-600">{comparisonData.current_period.stats.negative}</span>
+                    <span className={`text-xs flex items-center ${comparisonData.changes.negative.direction === 'down' ? 'text-green-600' : 'text-red-600'}`}>
+                      {comparisonData.changes.negative.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                      {Math.abs(comparisonData.changes.negative.value)}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.negative}</p>
+                </div>
+                {/* Neutral */}
+                <div className="bg-white rounded-lg p-4 text-center">
+                  <p className="text-xs text-gray-500 uppercase mb-1">Neutral</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl font-bold text-amber-600">{comparisonData.current_period.stats.neutral}</span>
+                    <span className={`text-xs flex items-center ${comparisonData.changes.neutral.direction === 'up' ? 'text-blue-600' : 'text-gray-600'}`}>
+                      {comparisonData.changes.neutral.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                      {Math.abs(comparisonData.changes.neutral.value)}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.neutral}</p>
+                </div>
+                {/* Positive % */}
+                <div className="bg-white rounded-lg p-4 text-center">
+                  <p className="text-xs text-gray-500 uppercase mb-1">Positive %</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl font-bold text-green-600">{comparisonData.current_period.stats.positive_pct}%</span>
+                    <span className={`text-xs flex items-center ${comparisonData.changes.positive_pct.direction === 'up' ? 'text-green-600' : 'text-red-600'}`}>
+                      {comparisonData.changes.positive_pct.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                      {Math.abs(comparisonData.changes.positive_pct.value)}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.positive_pct}%</p>
+                </div>
+                {/* Negative % */}
+                <div className="bg-white rounded-lg p-4 text-center">
+                  <p className="text-xs text-gray-500 uppercase mb-1">Negative %</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <span className="text-xl font-bold text-red-600">{comparisonData.current_period.stats.negative_pct}%</span>
+                    <span className={`text-xs flex items-center ${comparisonData.changes.negative_pct.direction === 'down' ? 'text-green-600' : 'text-red-600'}`}>
+                      {comparisonData.changes.negative_pct.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
+                      {Math.abs(comparisonData.changes.negative_pct.value)}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.negative_pct}%</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* KPI Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {/* Total Feedback */}
@@ -715,14 +858,23 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           {/* Charts Row 1 */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Sentiment Distribution */}
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
-              <div className="mb-4">
-                <h3 className="text-lg font-semibold text-[#1F2937]">Sentiment Distribution</h3>
-                <p className="text-sm text-[#6B7280]">
-                  {dateRange.from && dateRange.to 
-                    ? `${dateRange.from} to ${dateRange.to}` 
-                    : 'Last 30 Days'}
-                </p>
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200" ref={sentimentChartRef}>
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-[#1F2937]">Sentiment Distribution</h3>
+                  <p className="text-sm text-[#6B7280]">
+                    {dateRange.from && dateRange.to 
+                      ? `${dateRange.from} to ${dateRange.to}` 
+                      : 'Last 30 Days'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => exportChartAsImage(sentimentChartRef, 'sentiment-distribution')}
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                  title="Export as image"
+                >
+                  <Download className="h-4 w-4" />
+                </button>
               </div>
               {displayStats.total_feedback === 0 ? (
                 <div className="flex flex-col items-center justify-center h-[300px] text-[#6B7280]">
@@ -762,10 +914,19 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             </div>
 
             {/* Sentiment Trends - Enhanced Area Chart */}
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
-              <div className="mb-4">
-                <h3 className="text-lg font-semibold text-[#1F2937]">Sentiment Trends</h3>
-                <p className="text-sm text-[#6B7280]">Daily sentiment counts over time</p>
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200" ref={trendsChartRef}>
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-[#1F2937]">Sentiment Trends</h3>
+                  <p className="text-sm text-[#6B7280]">Daily sentiment counts over time</p>
+                </div>
+                <button
+                  onClick={() => exportChartAsImage(trendsChartRef, 'sentiment-trends')}
+                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+                  title="Export as image"
+                >
+                  <Download className="h-4 w-4" />
+                </button>
               </div>
               {displayTrends.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-[300px] text-[#6B7280]">

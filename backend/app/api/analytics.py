@@ -139,7 +139,7 @@ async def get_dashboard_stats(
         "neutral_feedback": neutral,
         "neutral_percentage": round((neutral / total_with_sentiment * 100) if total_with_sentiment > 0 else 0, 1),
         "pending_count": pending_count,
-        "average_confidence": round(avg_confidence * 100, 1) if avg_confidence else 0,
+        "average_confidence": round(avg_confidence, 1) if avg_confidence else 0,
         "resolution_rate": resolution_rate,
         "language_distribution": {
             "arabic": arabic_count,
@@ -164,50 +164,110 @@ async def get_dashboard_stats(
 @router.get("/sentiment-trends")
 async def get_sentiment_trends(
     days: int = Query(30, ge=7, le=365),
+    aggregate: str = Query("auto", regex="^(auto|daily|weekly)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get sentiment trends over time
+    Get sentiment trends over time.
+    aggregate: 'auto' (choose based on data density), 'daily', or 'weekly'
     """
     end_date = datetime.utcnow()
     start_date = end_date - timedelta(days=days)
     
-    # Group by date and sentiment
-    results = db.query(
-        func.date(Feedback.created_at).label('date'),
-        Feedback.sentiment,
-        func.count(Feedback.id).label('count')
-    ).filter(
+    # Count total data points to determine aggregation
+    total_count = db.query(func.count(Feedback.id)).filter(
         Feedback.created_at >= start_date
-    ).group_by(
-        func.date(Feedback.created_at),
-        Feedback.sentiment
-    ).all()
+    ).scalar() or 0
     
-    # Process results into date-grouped format
-    trends = {}
-    for row in results:
-        # Handle both date objects and strings
-        if row.date:
-            if isinstance(row.date, str):
-                try:
-                    from datetime import datetime as dt
-                    parsed_date = dt.strptime(row.date, "%Y-%m-%d")
-                    date_str = parsed_date.strftime("%b %d")
-                except:
-                    date_str = row.date[:10] if len(row.date) >= 10 else row.date
+    # Count unique days with data
+    unique_days = db.query(func.count(func.distinct(func.date(Feedback.created_at)))).filter(
+        Feedback.created_at >= start_date
+    ).scalar() or 0
+    
+    # Auto-determine aggregation: weekly if sparse data (less than 40% coverage)
+    use_weekly = aggregate == "weekly" or (aggregate == "auto" and unique_days < days * 0.4)
+    
+    if use_weekly:
+        # Weekly aggregation using ISO week
+        results = db.query(
+            func.strftime('%Y-W%W', Feedback.created_at).label('week'),
+            Feedback.sentiment,
+            func.count(Feedback.id).label('count')
+        ).filter(
+            Feedback.created_at >= start_date
+        ).group_by(
+            func.strftime('%Y-W%W', Feedback.created_at),
+            Feedback.sentiment
+        ).all()
+        
+        # Process weekly results
+        trends = {}
+        for row in results:
+            week_str = row.week if row.week else "Unknown"
+            if week_str not in trends:
+                trends[week_str] = {"date": week_str, "positive": 0, "negative": 0, "neutral": 0}
+            if row.sentiment:
+                trends[week_str][row.sentiment] = row.count
+        
+        sorted_trends = sorted(trends.values(), key=lambda x: x["date"])
+    else:
+        # Daily aggregation with filled dates
+        results = db.query(
+            func.date(Feedback.created_at).label('date'),
+            Feedback.sentiment,
+            func.count(Feedback.id).label('count')
+        ).filter(
+            Feedback.created_at >= start_date
+        ).group_by(
+            func.date(Feedback.created_at),
+            Feedback.sentiment
+        ).all()
+        
+        # Process into date-grouped format
+        trends = {}
+        for row in results:
+            if row.date:
+                if isinstance(row.date, str):
+                    try:
+                        parsed_date = datetime.strptime(row.date, "%Y-%m-%d")
+                        date_str = parsed_date.strftime("%b %d")
+                        sort_key = row.date
+                    except:
+                        date_str = row.date[:10] if len(row.date) >= 10 else row.date
+                        sort_key = row.date
+                else:
+                    date_str = row.date.strftime("%b %d")
+                    sort_key = row.date.strftime("%Y-%m-%d")
             else:
-                date_str = row.date.strftime("%b %d")
-        else:
-            date_str = "Unknown"
-        if date_str not in trends:
-            trends[date_str] = {"date": date_str, "positive": 0, "negative": 0, "neutral": 0}
-        if row.sentiment:
-            trends[date_str][row.sentiment] = row.count
-    
-    # Sort by date and return as list
-    sorted_trends = sorted(trends.values(), key=lambda x: x["date"])
+                date_str = "Unknown"
+                sort_key = "9999-99-99"
+            
+            if date_str not in trends:
+                trends[date_str] = {"date": date_str, "positive": 0, "negative": 0, "neutral": 0, "_sort": sort_key}
+            if row.sentiment:
+                trends[date_str][row.sentiment] = row.count
+        
+        # Fill missing dates with zeros for continuous chart
+        current = start_date.date() if hasattr(start_date, 'date') else start_date
+        end = end_date.date() if hasattr(end_date, 'date') else end_date
+        
+        while current <= end:
+            date_str = current.strftime("%b %d")
+            if date_str not in trends:
+                trends[date_str] = {
+                    "date": date_str,
+                    "positive": 0,
+                    "negative": 0,
+                    "neutral": 0,
+                    "_sort": current.strftime("%Y-%m-%d")
+                }
+            current += timedelta(days=1)
+        
+        # Sort by actual date and remove sort key
+        sorted_trends = sorted(trends.values(), key=lambda x: x.get("_sort", x["date"]))
+        for t in sorted_trends:
+            t.pop("_sort", None)
     
     return sorted_trends
 
@@ -575,4 +635,95 @@ async def get_response_time_metrics(
         "resolved_today": resolved_today,
         "resolved_this_week": resolved_this_week,
         "performance_grade": grade
+    }
+
+
+@router.get("/comparison")
+async def get_period_comparison(
+    days: int = Query(30, ge=7, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get comparison data between current period and previous period.
+    Returns side-by-side metrics for trend analysis.
+    """
+    end_date = datetime.utcnow()
+    current_start = end_date - timedelta(days=days)
+    previous_start = current_start - timedelta(days=days)
+    
+    def get_period_stats(start: datetime, end: datetime) -> dict:
+        """Get stats for a specific period"""
+        query = db.query(Feedback).filter(
+            and_(Feedback.created_at >= start, Feedback.created_at < end)
+        )
+        
+        total = query.count()
+        
+        sentiment_counts = query.with_entities(
+            Feedback.sentiment,
+            func.count(Feedback.id)
+        ).group_by(Feedback.sentiment).all()
+        
+        sentiment_dict = {s[0]: s[1] for s in sentiment_counts if s[0]}
+        positive = sentiment_dict.get("positive", 0)
+        negative = sentiment_dict.get("negative", 0)
+        neutral = sentiment_dict.get("neutral", 0)
+        
+        # Calculate percentages
+        total_with_sentiment = positive + negative + neutral
+        positive_pct = round((positive / total_with_sentiment * 100) if total_with_sentiment > 0 else 0, 1)
+        negative_pct = round((negative / total_with_sentiment * 100) if total_with_sentiment > 0 else 0, 1)
+        neutral_pct = round((neutral / total_with_sentiment * 100) if total_with_sentiment > 0 else 0, 1)
+        
+        # Average confidence
+        avg_conf = db.query(func.avg(Feedback.sentiment_confidence)).filter(
+            and_(Feedback.created_at >= start, Feedback.created_at < end)
+        ).scalar() or 0
+        
+        return {
+            "total": total,
+            "positive": positive,
+            "negative": negative,
+            "neutral": neutral,
+            "positive_pct": positive_pct,
+            "negative_pct": negative_pct,
+            "neutral_pct": neutral_pct,
+            "avg_confidence": round(avg_conf, 1)
+        }
+    
+    current_stats = get_period_stats(current_start, end_date)
+    previous_stats = get_period_stats(previous_start, current_start)
+    
+    # Calculate changes
+    def calc_change(current: float, previous: float) -> dict:
+        if previous == 0:
+            change = 100 if current > 0 else 0
+        else:
+            change = round(((current - previous) / previous) * 100, 1)
+        return {
+            "value": change,
+            "direction": "up" if change > 0 else "down" if change < 0 else "same"
+        }
+    
+    return {
+        "period_days": days,
+        "current_period": {
+            "start": current_start.isoformat(),
+            "end": end_date.isoformat(),
+            "stats": current_stats
+        },
+        "previous_period": {
+            "start": previous_start.isoformat(),
+            "end": current_start.isoformat(),
+            "stats": previous_stats
+        },
+        "changes": {
+            "total": calc_change(current_stats["total"], previous_stats["total"]),
+            "positive": calc_change(current_stats["positive"], previous_stats["positive"]),
+            "negative": calc_change(current_stats["negative"], previous_stats["negative"]),
+            "neutral": calc_change(current_stats["neutral"], previous_stats["neutral"]),
+            "positive_pct": calc_change(current_stats["positive_pct"], previous_stats["positive_pct"]),
+            "negative_pct": calc_change(current_stats["negative_pct"], previous_stats["negative_pct"])
+        }
     }

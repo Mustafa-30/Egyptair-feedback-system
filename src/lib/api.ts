@@ -295,6 +295,11 @@ export const analyticsApi = {
   },
 
   getResponseTime: () => apiFetch<ResponseTimeData>('/analytics/response-time'),
+
+  getComparison: (days?: number) => {
+    const query = days ? `?days=${days}` : '';
+    return apiFetch<ComparisonData>(`/analytics/comparison${query}`);
+  },
 };
 
 // Upload API
@@ -604,6 +609,46 @@ export interface ResponseTimeData {
   resolved_today: number;
   resolved_this_week: number;
   performance_grade: string;
+}
+
+export interface ComparisonData {
+  period_days: number;
+  current_period: {
+    start: string;
+    end: string;
+    stats: {
+      total: number;
+      positive: number;
+      negative: number;
+      neutral: number;
+      positive_pct: number;
+      negative_pct: number;
+      neutral_pct: number;
+      avg_confidence: number;
+    };
+  };
+  previous_period: {
+    start: string;
+    end: string;
+    stats: {
+      total: number;
+      positive: number;
+      negative: number;
+      neutral: number;
+      positive_pct: number;
+      negative_pct: number;
+      neutral_pct: number;
+      avg_confidence: number;
+    };
+  };
+  changes: {
+    total: { value: number; direction: string };
+    positive: { value: number; direction: string };
+    negative: { value: number; direction: string };
+    neutral: { value: number; direction: string };
+    positive_pct: { value: number; direction: string };
+    negative_pct: { value: number; direction: string };
+  };
 }
 
 // ===============================

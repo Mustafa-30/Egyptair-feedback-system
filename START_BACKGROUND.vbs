@@ -1,41 +1,32 @@
-' EgyptAir Feedback System - Hidden Launcher
-' This script runs both servers in the background (no visible windows)
+' EgyptAir Feedback System - Background Launcher
+' Starts servers minimized so they persist when you close other windows
 
 Set WshShell = CreateObject("WScript.Shell")
-Set FSO = CreateObject("Scripting.FileSystemObject")
+projectDir = "d:\Gruaduation project\Code of project\Egyptair-feedback-system"
 
-' Get the script's folder path
-scriptPath = FSO.GetParentFolderName(WScript.ScriptFullName)
-
-' Kill any existing processes on ports 8000 and 3000
-WshShell.Run "cmd /c for /f ""tokens=5"" %a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /PID %a", 0, True
-WshShell.Run "cmd /c for /f ""tokens=5"" %a in ('netstat -aon ^| findstr :3000 ^| findstr LISTENING') do taskkill /F /PID %a", 0, True
-
-' Wait a moment
+' Kill existing servers first
+WshShell.Run "taskkill /f /im python.exe", 0, True
+WshShell.Run "taskkill /f /im node.exe", 0, True
 WScript.Sleep 2000
 
-' Start Backend Server (completely hidden - no window at all)
-WshShell.CurrentDirectory = scriptPath & "\backend"
-WshShell.Run "powershell -WindowStyle Hidden -Command ""cd '" & scriptPath & "\backend'; python -m uvicorn main:app --reload --port 8000 --host 127.0.0.1""", 0, False
+' Start Backend (minimized window - stays running)
+WshShell.Run "cmd /c cd /d """ & projectDir & "\backend"" && python -m uvicorn main:app --host 0.0.0.0 --port 8001", 2, False
 
-' Wait for backend to initialize
+WScript.Sleep 4000
+
+' Start Frontend (minimized window - stays running)
+WshShell.Run "cmd /c cd /d """ & projectDir & """ && npm run dev", 2, False
+
 WScript.Sleep 5000
 
-' Start Frontend Server (completely hidden - no window at all)
-WshShell.CurrentDirectory = scriptPath
-WshShell.Run "powershell -WindowStyle Hidden -Command ""cd '" & scriptPath & "'; npm run dev""", 0, False
-
-' Wait for frontend to initialize
-WScript.Sleep 6000
-
 ' Open browser
-WshShell.Run "http://localhost:3000", 1, False
+WshShell.Run "http://localhost:5173", 1, False
 
-' Show success message
-MsgBox "EgyptAir Feedback System Started!" & vbCrLf & vbCrLf & _
-       "Frontend: http://localhost:3000" & vbCrLf & _
-       "Backend: http://localhost:8000" & vbCrLf & vbCrLf & _
-       "Login: admin / admin" & vbCrLf & vbCrLf & _
-       "Servers are running in the background (no windows)." & vbCrLf & _
-       "To STOP: Double-click STOP_SERVERS.vbs", _
+MsgBox "EgyptAir Feedback System is running!" & vbCrLf & vbCrLf & _
+       "Backend: http://localhost:8001" & vbCrLf & _
+       "Frontend: http://localhost:5173" & vbCrLf & vbCrLf & _
+       "Login: admin / admin123" & vbCrLf & vbCrLf & _
+       "Note: Two minimized windows are keeping the servers running." & vbCrLf & _
+       "Do NOT close those windows or servers will stop." & vbCrLf & vbCrLf & _
+       "To stop: Run STOP_ALL_SERVERS.vbs", _
        vbInformation, "EgyptAir System"

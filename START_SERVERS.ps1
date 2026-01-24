@@ -1,37 +1,46 @@
-# EgyptAir Feedback Analysis System - Quick Start Script
-# PowerShell version for better Windows compatibility
+# EgyptAir Feedback Analysis System - Background Service Starter
+# Servers run as hidden background processes that survive terminal closure
+
+$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BackendDir = "$ProjectDir\backend"
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "EgyptAir Feedback Analysis System" -ForegroundColor Green
-Write-Host "Starting Backend and Frontend Servers" -ForegroundColor Green
+Write-Host "  EgyptAir Feedback Analysis System" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Start Backend Server
-Write-Host "[1/2] Starting Backend Server (Port 8000)..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'backend'; python -m uvicorn main:app --reload --port 8000" -WorkingDirectory $PSScriptRoot
-
-Start-Sleep -Seconds 3
-
-# Start Frontend Server
-Write-Host "[2/2] Starting Frontend Server (Port 3000)..." -ForegroundColor Yellow
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "npm run dev" -WorkingDirectory $PSScriptRoot
-
+# Kill any existing processes on our ports
+Write-Host "[CLEANUP] Stopping any existing servers..." -ForegroundColor Yellow
+Get-Process -Name "python" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name "node" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 
+# Start Backend as hidden background process
+Write-Host "[START] Starting Backend Server (port 8001)..." -ForegroundColor Green
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$BackendDir`" && python -m uvicorn main:app --host 0.0.0.0 --port 8001" -WindowStyle Hidden
+
+Start-Sleep -Seconds 4
+
+# Start Frontend as hidden background process
+Write-Host "[START] Starting Frontend Server..." -ForegroundColor Green
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$ProjectDir`" && npm run dev" -WindowStyle Hidden
+
+Start-Sleep -Seconds 5
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "✓ Both servers are starting!" -ForegroundColor Green
+Write-Host "  Backend:  http://localhost:8001" -ForegroundColor Green
+Write-Host "  Frontend: http://localhost:5173" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Backend:  http://localhost:8000" -ForegroundColor White
-Write-Host "API Docs: http://localhost:8000/docs" -ForegroundColor White
-Write-Host "Frontend: http://localhost:3000" -ForegroundColor White
+Write-Host "  Login: admin / admin123" -ForegroundColor White
 Write-Host ""
-Write-Host "Login Credentials:" -ForegroundColor Yellow
-Write-Host "  Username: admin" -ForegroundColor White
-Write-Host "  Password: admin" -ForegroundColor White
+Write-Host "  Servers running in BACKGROUND!" -ForegroundColor Green
+Write-Host "  You can CLOSE this window safely!" -ForegroundColor Green
 Write-Host ""
-Write-Host "Press any key to close this window..." -ForegroundColor Gray
-Write-Host "(The servers will continue running in separate windows)" -ForegroundColor Gray
+
+# Open browser
+Start-Process "http://localhost:5173"
+
+Write-Host "Press any key to close..." -ForegroundColor Gray
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

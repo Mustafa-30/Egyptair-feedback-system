@@ -471,6 +471,7 @@ class SentimentAnalyzer:
         """
         ML-based sentiment analysis using pre-trained models
         Combines ML prediction with rule-based negation handling
+        Enhanced to detect neutral/mixed sentiments
         """
         # Select appropriate pipeline based on language
         if language == "AR" and hasattr(self, 'arabic_pipeline') and self.arabic_pipeline:
@@ -491,45 +492,85 @@ class SentimentAnalyzer:
             
             # Map different label formats to our standard labels
             # DistilBERT uses: POSITIVE, NEGATIVE
-            # CAMeL uses: positive, negative, neutral
+            # CAMeL uses: positive, negative, neutral, mixed
             # Multilingual uses: 1 star - 5 stars
-            if label in ['POSITIVE', 'POS'] or 'positive' in label.lower() or '5 star' in label.lower() or '4 star' in label.lower():
+            label_lower = label.lower()
+            
+            if label in ['POSITIVE', 'POS', 'LABEL_2'] or label_lower in ['positive', 'pos', 'very_positive'] or '5 star' in label_lower or '4 star' in label_lower:
                 ml_sentiment = 'positive'
-            elif label in ['NEGATIVE', 'NEG'] or 'negative' in label.lower() or '1 star' in label.lower() or '2 star' in label.lower():
+            elif label in ['NEGATIVE', 'NEG', 'LABEL_0'] or label_lower in ['negative', 'neg', 'very_negative'] or '1 star' in label_lower or '2 star' in label_lower:
                 ml_sentiment = 'negative'
-            else:
+            elif label in ['NEUTRAL', 'LABEL_1'] or label_lower in ['neutral', 'mixed', '3 star']:
                 ml_sentiment = 'neutral'
+            else:
+                # Unknown label - use confidence to decide
+                if confidence > 0.75:
+                    ml_sentiment = 'positive'
+                elif confidence < 0.35:
+                    ml_sentiment = 'negative'
+                else:
+                    ml_sentiment = 'neutral'
+            
+            # Check for neutral indicators (low confidence or mixed signals)
+            text_lower = text.lower()
+            
+            # Detect neutral/mixed patterns
+            neutral_patterns = [
+                r'\b(okay|ok|alright|average|so-so|decent|acceptable|fair|moderate)\b',
+                r'\b(could be better|nothing special|not bad|not great)\b',
+                r'\b(good but|nice but|great but).*(bad|poor|disappointing|problem)',
+                r'\b(bad|poor|terrible).*(but|however).*(good|nice|great|helpful)',
+                r'\bعادي\b|\bمقبول\b|\bمتوسط\b'
+            ]
+            
+            has_neutral_pattern = any(re.search(pattern, text_lower) for pattern in neutral_patterns)
+            
+            # If confidence is low OR neutral patterns detected, mark as neutral
+            if has_neutral_pattern:
+                ml_sentiment = 'neutral'
+                confidence = min(confidence, 0.70)
+            elif confidence < 0.65 and ml_sentiment != 'neutral':
+                # Low confidence - might be neutral
+                ml_sentiment = 'neutral'
+                confidence = 0.60
             
             # Apply negation handling - this is crucial!
             # If we detect negation and the ML model doesn't catch it, override
             has_negation, negated_words = self.detect_negation(text, language)
             
-            if has_negation:
+            if has_negation and len(negated_words) > 0:
                 # Check if ML missed a negated positive
                 if ml_sentiment == 'positive':
                     # Check if positive words are negated
                     text_lower = text.lower()
                     pos_words = self.positive_words_en if language in ["EN", "Mixed"] else self.positive_words_ar
                     
+                    negation_detected = False
                     for neg_word in negated_words:
-                        if neg_word in pos_words or any(pos in neg_word for pos in pos_words):
+                        neg_word_lower = neg_word.lower()
+                        # Check if the negated word is a positive word
+                        if neg_word_lower in pos_words or any(pos in neg_word_lower or neg_word_lower in pos for pos in pos_words):
                             # Positive word is negated - flip to negative
                             ml_sentiment = 'negative'
-                            confidence = max(0.65, confidence * 0.8)  # Reduce confidence
+                            confidence = max(0.70, min(0.85, confidence * 0.9))  # Adjust confidence
+                            negation_detected = True
                             break
                     
-                    # Also check common patterns
-                    negation_patterns = [
-                        r"not\s+(good|great|nice|happy|satisfied|comfortable|helpful)",
-                        r"(don't|doesn't|didn't|won't|wouldn't|can't|couldn't)\s+(like|love|enjoy|recommend)",
-                        r"never\s+(again|recommend|fly|use)",
-                        r"wasn't\s+(good|helpful|friendly|professional)"
-                    ]
-                    for pattern in negation_patterns:
-                        if re.search(pattern, text_lower):
-                            ml_sentiment = 'negative'
-                            confidence = max(0.70, confidence * 0.85)
-                            break
+                    # Also check common negation patterns if not already detected
+                    if not negation_detected:
+                        negation_patterns = [
+                            r"not\s+(good|great|nice|happy|satisfied|comfortable|helpful|pleased|excellent|fine)",
+                            r"(don't|doesn't|didn't|won't|wouldn't|can't|couldn't)\s+(like|love|enjoy|recommend|want|appreciate)",
+                            r"never\s+(again|recommend|fly|use|return|come\s+back)",
+                            r"(wasn't|weren't|isn't|aren't)\s+(good|helpful|friendly|professional|pleasant|comfortable)",
+                            r"no\s+(good|help|service|support|response)",
+                            r"nothing\s+(good|positive|helpful|useful)"
+                        ]
+                        for pattern in negation_patterns:
+                            if re.search(pattern, text_lower):
+                                ml_sentiment = 'negative'
+                                confidence = max(0.75, confidence * 0.9)
+                                break
             
             return ml_sentiment, confidence
             
@@ -584,9 +625,10 @@ class SentimentAnalyzer:
             "negated_words": negated_words[:5] if negated_words else []  # Limit to 5
         }
     
-    def analyze_batch(self, texts: list, use_ml: bool = False) -> list:
+    def analyze_batch(self, texts: list, use_ml: bool = True) -> list:
         """
         Analyze sentiment for a batch of texts
+        Defaults to use_ml=True for better accuracy
         """
         results = []
         for text in texts:

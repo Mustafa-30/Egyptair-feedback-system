@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     API_PREFIX: str = "/api/v1"
+    PORT: int = 8000
     
     # Database
     DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/egyptair_db"

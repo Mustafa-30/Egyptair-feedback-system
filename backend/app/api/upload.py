@@ -51,6 +51,7 @@ async def process_upload(
     text_column: Optional[str] = Query(None, description="Column containing feedback text"),
     analyze_sentiment: bool = Query(True, description="Analyze sentiment for each row"),
     save_to_db: bool = Query(True, description="Save processed data to database"),
+    overwrite_duplicates: bool = Query(False, description="Remove duplicate feedback before inserting"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -100,12 +101,71 @@ async def process_upload(
         analyze_sentiment=analyze_sentiment
     )
     
-    # Save to database if requested
+    # ============================================================
+    # DUPLICATE HANDLING - ALWAYS CHECK, NEVER INSERT DUPLICATES
+    # ============================================================
+    
+    # Step 1: Get all existing feedback texts from database
+    existing_feedback = db.query(Feedback).all()
+    existing_texts_map = {f.text.strip().lower(): f for f in existing_feedback}
+    
+    # Step 2: Also track duplicates within the uploaded file itself
+    seen_in_upload = set()
+    unique_items = []
+    duplicates_in_file = 0
+    
+    for item in processed_data:
+        text_normalized = item["text"].strip().lower()
+        
+        # Skip if we've already seen this text in the current upload
+        if text_normalized in seen_in_upload:
+            duplicates_in_file += 1
+            continue
+        
+        seen_in_upload.add(text_normalized)
+        unique_items.append(item)
+    
+    # Step 3: Handle duplicates with existing database entries
+    duplicates_removed = 0
+    duplicates_skipped = 0
+    items_to_insert = []
+    
+    for item in unique_items:
+        text_normalized = item["text"].strip().lower()
+        
+        if text_normalized in existing_texts_map:
+            if overwrite_duplicates:
+                # Delete old entry - will be replaced with new one
+                old_feedback = existing_texts_map[text_normalized]
+                db.delete(old_feedback)
+                duplicates_removed += 1
+                items_to_insert.append(item)
+            else:
+                # Skip this item - keep old entry
+                duplicates_skipped += 1
+        else:
+            # New unique feedback - add it
+            items_to_insert.append(item)
+    
+    # Commit deletions before inserting
+    if duplicates_removed > 0:
+        db.commit()
+        print(f"[INFO] Removed {duplicates_removed} duplicate entries (will be replaced)")
+    
+    if duplicates_skipped > 0:
+        print(f"[INFO] Skipped {duplicates_skipped} duplicates (kept existing entries)")
+    
+    if duplicates_in_file > 0:
+        print(f"[INFO] Skipped {duplicates_in_file} duplicates within uploaded file")
+    
+    # ============================================================
+    # SAVE TO DATABASE - Only insert unique, non-duplicate items
+    # ============================================================
     saved_count = 0
     errors = []
     
     if save_to_db:
-        for idx, item in enumerate(processed_data):
+        for idx, item in enumerate(items_to_insert):
             try:
                 feedback = Feedback(
                     customer_name=item.get("customer_name"),
@@ -121,7 +181,7 @@ async def process_upload(
                     model_version=item.get("model_version"),
                     source="upload",
                     status="pending",
-                    priority="medium",
+                    priority=item.get("priority", "medium"),
                     created_by=current_user.id,
                     file_id=feedback_file.file_id  # Link to FeedbackFile
                 )
@@ -147,10 +207,14 @@ async def process_upload(
         "filename": file.filename,
         "total_rows": len(df),
         "processed_count": len(processed_data),
+        "unique_count": len(unique_items),
         "saved_count": saved_count,
         "error_count": len(errors),
+        "duplicates_removed": duplicates_removed,
+        "duplicates_skipped": duplicates_skipped,
+        "duplicates_in_file": duplicates_in_file,
         "errors": errors[:10] if errors else [],  # Return first 10 errors
-        "sample_results": processed_data[:5] if processed_data else []
+        "sample_results": items_to_insert[:5] if items_to_insert else []
     }
 
 

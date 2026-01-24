@@ -16,8 +16,8 @@ Get-Process -Name "node" -ErrorAction SilentlyContinue | Stop-Process -Force -Er
 Start-Sleep -Seconds 2
 
 # Start Backend as hidden background process
-Write-Host "[START] Starting Backend Server (port 8001)..." -ForegroundColor Green
-Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$BackendDir`" && python -m uvicorn main:app --host 0.0.0.0 --port 8001" -WindowStyle Hidden
+Write-Host "[START] Starting Backend Server (port 8000)..." -ForegroundColor Green
+Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "cd /d `"$BackendDir`" && python -m uvicorn main:app --host 0.0.0.0 --port 8000" -WindowStyle Hidden
 
 Start-Sleep -Seconds 4
 
@@ -29,8 +29,8 @@ Start-Sleep -Seconds 5
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "  Backend:  http://localhost:8001" -ForegroundColor Green
-Write-Host "  Frontend: http://localhost:5173" -ForegroundColor Green
+Write-Host "  Backend:  http://localhost:8000" -ForegroundColor Green
+Write-Host "  Frontend: http://localhost:3000" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Login: admin / admin123" -ForegroundColor White
@@ -40,7 +40,7 @@ Write-Host "  You can CLOSE this window safely!" -ForegroundColor Green
 Write-Host ""
 
 # Open browser
-Start-Process "http://localhost:5173"
+Start-Process "http://localhost:3000"
 
 Write-Host "Press any key to close..." -ForegroundColor Gray
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

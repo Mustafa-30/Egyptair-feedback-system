@@ -280,7 +280,7 @@ class UploadService:
             
             # Analyze sentiment if requested
             if analyze_sentiment:
-                analysis = sentiment_analyzer.analyze(text)
+                analysis = sentiment_analyzer.analyze(text, use_ml=True)  # Force ML usage
                 
                 # Auto-assign priority based on sentiment and content
                 priority = auto_prioritize(

@@ -2,7 +2,7 @@
  * API Client for Backend Communication
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 const TOKEN_KEY = 'access_token';
 const TOKEN_EXPIRY_KEY = 'token_expiry';
@@ -323,7 +323,7 @@ export const uploadApi = {
     return response.json();
   },
 
-  process: async (file: File, options?: { textColumn?: string; analyzeSentiment?: boolean; saveToDb?: boolean }) => {
+  process: async (file: File, options?: { textColumn?: string; analyzeSentiment?: boolean; saveToDb?: boolean; overwriteDuplicates?: boolean }) => {
     const formData = new FormData();
     formData.append('file', file);
     
@@ -331,6 +331,7 @@ export const uploadApi = {
     if (options?.textColumn) searchParams.append('text_column', options.textColumn);
     if (options?.analyzeSentiment !== undefined) searchParams.append('analyze_sentiment', options.analyzeSentiment.toString());
     if (options?.saveToDb !== undefined) searchParams.append('save_to_db', options.saveToDb.toString());
+    if (options?.overwriteDuplicates !== undefined) searchParams.append('overwrite_duplicates', options.overwriteDuplicates.toString());
     
     const token = getAccessToken();
     const query = searchParams.toString();

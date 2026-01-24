@@ -18,7 +18,14 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadStats, setUploadStats] = useState({ total: 0, processed: 0, errors: 0 });
+  const [uploadStats, setUploadStats] = useState({ 
+    total: 0, 
+    processed: 0, 
+    errors: 0,
+    duplicatesRemoved: 0,
+    duplicatesSkipped: 0,
+    duplicatesInFile: 0 
+  });
   const [overwriteDuplicates, setOverwriteDuplicates] = useState(false);
   const [sendNotification, setSendNotification] = useState(true);
   const [previewData, setPreviewData] = useState<PreviewRow[]>([]);
@@ -119,6 +126,7 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
       const result = await uploadApi.process(file, {
         analyzeSentiment: true,
         saveToDb: true,
+        overwriteDuplicates: overwriteDuplicates,
       });
 
       clearInterval(progressInterval);
@@ -128,6 +136,9 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
         total: result.total_rows,
         processed: result.saved_count,
         errors: result.error_count,
+        duplicatesRemoved: result.duplicates_removed || 0,
+        duplicatesSkipped: result.duplicates_skipped || 0,
+        duplicatesInFile: result.duplicates_in_file || 0,
       });
       setUploadStatus('success');
     } catch (err) {
@@ -147,7 +158,14 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
     setFile(null);
     setUploadStatus('idle');
     setUploadProgress(0);
-    setUploadStats({ total: 0, processed: 0, errors: 0 });
+    setUploadStats({ 
+      total: 0, 
+      processed: 0, 
+      errors: 0,
+      duplicatesRemoved: 0,
+      duplicatesSkipped: 0,
+      duplicatesInFile: 0 
+    });
     setPreviewData([]);
     setErrorMessage(null);
     if (fileInputRef.current) {
@@ -303,20 +321,44 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
           <h2 className="text-[#1F2937] mb-2">Upload Successful!</h2>
           <p className="text-[#6B7280] mb-6">Your feedback has been processed and analyzed</p>
           
-          <div className="grid grid-cols-3 gap-4 mb-8 max-w-2xl mx-auto">
+          <div className="grid grid-cols-3 gap-4 mb-4 max-w-2xl mx-auto">
             <div className="p-4 bg-blue-50 rounded-lg">
-              <div className="text-[#003366] mb-1">{uploadStats.total}</div>
-              <div className="text-[#6B7280]">Total Records</div>
+              <div className="text-[#003366] text-2xl font-bold mb-1">{uploadStats.total}</div>
+              <div className="text-[#6B7280] text-sm">Total Records</div>
             </div>
             <div className="p-4 bg-green-50 rounded-lg">
-              <div className="text-green-600 mb-1">{uploadStats.processed}</div>
-              <div className="text-[#6B7280]">Successfully Processed</div>
+              <div className="text-green-600 text-2xl font-bold mb-1">{uploadStats.processed}</div>
+              <div className="text-[#6B7280] text-sm">Successfully Saved</div>
             </div>
             <div className="p-4 bg-red-50 rounded-lg">
-              <div className="text-red-600 mb-1">{uploadStats.errors}</div>
-              <div className="text-[#6B7280]">Errors/Skipped</div>
+              <div className="text-red-600 text-2xl font-bold mb-1">{uploadStats.errors}</div>
+              <div className="text-[#6B7280] text-sm">Errors</div>
             </div>
           </div>
+          
+          {/* Duplicate Stats */}
+          {(uploadStats.duplicatesRemoved > 0 || uploadStats.duplicatesSkipped > 0 || uploadStats.duplicatesInFile > 0) && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6 max-w-2xl mx-auto">
+              <h4 className="text-yellow-800 font-medium mb-2">📋 Duplicate Handling</h4>
+              <div className="grid grid-cols-3 gap-2 text-sm">
+                {uploadStats.duplicatesRemoved > 0 && (
+                  <div className="text-yellow-700">
+                    <span className="font-medium">{uploadStats.duplicatesRemoved}</span> replaced
+                  </div>
+                )}
+                {uploadStats.duplicatesSkipped > 0 && (
+                  <div className="text-yellow-700">
+                    <span className="font-medium">{uploadStats.duplicatesSkipped}</span> skipped (existing)
+                  </div>
+                )}
+                {uploadStats.duplicatesInFile > 0 && (
+                  <div className="text-yellow-700">
+                    <span className="font-medium">{uploadStats.duplicatesInFile}</span> duplicates in file
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="flex gap-4 justify-center">
             <button 

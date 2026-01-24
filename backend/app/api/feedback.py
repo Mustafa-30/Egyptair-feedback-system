@@ -339,3 +339,55 @@ async def bulk_update_status(
     db.commit()
     
     return {"message": f"Updated {updated_count} feedback entries"}
+
+
+@router.delete("/remove-duplicates")
+async def remove_duplicate_feedbacks(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_supervisor)
+):
+    """
+    Remove all duplicate feedback entries (keeps first occurrence).
+    Supervisor only.
+    """
+    from collections import defaultdict
+    
+    # Get all feedback entries, ordered by creation date (oldest first)
+    all_feedback = db.query(Feedback).order_by(Feedback.created_at.asc()).all()
+    
+    # Group by normalized text
+    text_groups = defaultdict(list)
+    for f in all_feedback:
+        text_normalized = f.text.strip().lower()
+        text_groups[text_normalized].append(f)
+    
+    # Collect IDs to delete (keep first, delete rest)
+    duplicates_to_delete = []
+    for text, feedbacks in text_groups.items():
+        if len(feedbacks) > 1:
+            # Keep the first one (oldest), delete the rest
+            duplicates = feedbacks[1:]
+            for dup in duplicates:
+                duplicates_to_delete.append(dup.id)  # Use 'id' not 'feedback_id'
+    
+    if not duplicates_to_delete:
+        return {
+            "message": "No duplicates found",
+            "duplicates_removed": 0,
+            "remaining_count": len(all_feedback)
+        }
+    
+    # Delete duplicates
+    deleted_count = db.query(Feedback).filter(
+        Feedback.id.in_(duplicates_to_delete)
+    ).delete(synchronize_session=False)
+    
+    db.commit()
+    
+    remaining = db.query(Feedback).count()
+    
+    return {
+        "message": f"Successfully removed {deleted_count} duplicate entries",
+        "duplicates_removed": deleted_count,
+        "remaining_count": remaining
+    }

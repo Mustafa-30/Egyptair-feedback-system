@@ -1,0 +1,22 @@
+# ===============================================
+# EgyptAir Feedback System - Port Configuration
+# ===============================================
+# 
+# This file defines ALL ports in ONE place.
+# If you need to change ports, ONLY edit this file!
+#
+
+# CRITICAL: Backend API Port
+# Frontend is configured to connect to this port
+# DO NOT CHANGE unless you know what you're doing!
+BACKEND_PORT=8000
+
+# Frontend Development Server Port
+FRONTEND_PORT=3000
+
+# ===============================================
+# PORT USAGE:
+# - Backend API: http://localhost:8000
+# - Frontend UI: http://localhost:3000
+# - API Docs: http://localhost:8000/docs
+# ===============================================

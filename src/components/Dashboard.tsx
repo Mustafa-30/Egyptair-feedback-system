@@ -951,13 +951,13 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                    <XAxis dataKey="date" stroke="#6B7280" fontSize={12} />
+                    <XAxis dataKey="date" stroke="#6B7280" fontSize={12} tickMargin={8} />
                     <YAxis stroke="#6B7280" fontSize={12} />
                     <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #E5E7EB' }} />
                     <Legend />
-                    <Area type="monotone" dataKey="positive" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorPositive)" name="Positive" />
-                    <Area type="monotone" dataKey="negative" stroke="#EF4444" strokeWidth={2} fillOpacity={1} fill="url(#colorNegative)" name="Negative" />
-                    <Area type="monotone" dataKey="neutral" stroke="#F59E0B" strokeWidth={2} fillOpacity={1} fill="url(#colorNeutral)" name="Neutral" />
+                    <Area type="monotone" dataKey="positive" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorPositive)" name="Positive" connectNulls dot={{ r: 4 }} />
+                    <Area type="monotone" dataKey="negative" stroke="#EF4444" strokeWidth={2} fillOpacity={1} fill="url(#colorNegative)" name="Negative" connectNulls dot={{ r: 4 }} />
+                    <Area type="monotone" dataKey="neutral" stroke="#F59E0B" strokeWidth={2} fillOpacity={1} fill="url(#colorNeutral)" name="Neutral" connectNulls dot={{ r: 4 }} />
                   </AreaChart>
                 </ResponsiveContainer>
               )}

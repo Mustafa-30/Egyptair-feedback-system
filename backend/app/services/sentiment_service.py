@@ -158,17 +158,85 @@ class SentimentAnalyzer:
             'waste', 'worthless', 'useless', 'pointless', 'hopeless'
         }
         
-        # ========== NEUTRAL/MIXED WORDS ==========
+        # ========== EXPANDED NEUTRAL/MIXED WORDS ==========
         self.neutral_words_en = {
+            # Basic neutral indicators
             'okay', 'ok', 'alright', 'average', 'normal', 'standard', 'typical',
             'regular', 'usual', 'ordinary', 'moderate', 'medium', 'so-so',
-            'mixed', 'varied', 'sometimes', 'occasionally', 'depends'
+            'mixed', 'varied', 'sometimes', 'occasionally', 'depends',
+            # Mild positive (not strong enough to be positive)
+            'fine', 'decent', 'acceptable', 'adequate', 'reasonable', 'fair',
+            'passable', 'tolerable', 'satisfactory', 'sufficient', 'workable',
+            # Uncertainty indicators
+            'maybe', 'perhaps', 'somewhat', 'partially', 'partly', 'sort of',
+            'kind of', 'more or less', 'could be', 'might be', 'not sure',
+            # Balanced/mixed signals
+            'pros and cons', 'hit or miss', 'ups and downs', 'mixed feelings',
+            'both good and bad', 'some good some bad', 'neither here nor there',
+            # Expectation-based neutral
+            'as expected', 'what i expected', 'nothing special', 'nothing extraordinary',
+            'nothing remarkable', 'unremarkable', 'uneventful', 'routine',
+            # Comparative neutral
+            'same as usual', 'like always', 'no different', 'no change',
+            'similar to before', 'about average', 'middle of the road'
         }
         
         self.neutral_words_ar = {
+            # Basic neutral
             'عادي', 'عادية', 'متوسط', 'متوسطة', 'مقبول', 'مقبولة',
-            'احيانا', 'أحياناً', 'بعض', 'ممكن', 'يعتمد'
+            'احيانا', 'أحياناً', 'بعض', 'ممكن', 'يعتمد',
+            # Mild/acceptable
+            'معقول', 'معقولة', 'لا بأس', 'مش وحش', 'ماشي', 'تمام',
+            'كويس', 'نص نص', 'وسط', 'بين بين',
+            # Uncertainty
+            'ربما', 'يمكن', 'محتمل', 'نوعا ما', 'إلى حد ما',
+            # Nothing special
+            'عادي جدا', 'مفيش جديد', 'زي ما هو', 'زي العادة',
+            'المتوقع', 'كالمعتاد', 'لا شيء مميز'
         }
+        
+        # ========== NEUTRAL PHRASE PATTERNS ==========
+        self.neutral_patterns_en = [
+            # "It was X" patterns with neutral words
+            r'\b(it was|was|were|is|are)\s+(okay|ok|fine|decent|average|alright|acceptable)\b',
+            # "Not bad" / "Not great" patterns (neutral, not negative)
+            r'\bnot\s+(bad|terrible|awful|horrible)\b(?!.{0,20}(but|however|although))',
+            r'\bnot\s+(great|amazing|excellent|outstanding)\b(?!.{0,20}(but|however|although))',
+            # "Could be better/worse" patterns
+            r'\bcould\s+(be|have been)\s+(better|worse)\b',
+            r'\bcould\s+improve\b',
+            r'\broom\s+for\s+improvement\b',
+            # Expectation patterns
+            r'\b(met|meets)\s+(my\s+)?expectations?\b',
+            r'\bas\s+(i\s+)?expected\b',
+            r'\bnothing\s+(special|extraordinary|remarkable|to\s+write\s+home\s+about)\b',
+            # Balanced patterns
+            r'\b(some|a\s+few)\s+(good|positive).{0,20}(some|a\s+few)\s+(bad|negative|issues?)\b',
+            r'\b(has|have)\s+(its|their)\s+(pros\s+and\s+cons|ups\s+and\s+downs)\b',
+            # Hedging language
+            r'\b(i\s+guess|i\s+suppose|i\s+think)\s+(it\'?s?\s+)?(okay|fine|alright)\b',
+            # "Just" patterns (minimizing)
+            r'\bjust\s+(okay|fine|average|normal)\b',
+            # Neither patterns
+            r'\bneither\s+(good|great|bad|terrible)\s+nor\s+(good|great|bad|terrible)\b',
+            # Specific neutral phrases
+            r'\b(no\s+complaints?|can\'t\s+complain|nothing\s+wrong)\b',
+            r'\b(did\s+the\s+job|got\s+the\s+job\s+done|served\s+its\s+purpose)\b',
+            r'\b(standard|typical|normal)\s+(service|flight|experience)\b',
+        ]
+        
+        self.neutral_patterns_ar = [
+            r'\bعادي\s*(جدا|جداً)?\b',
+            r'\bمقبول\s*(إلى|الى)?\s*(حد)?\s*(ما)?\b',
+            r'\bلا\s*بأس\b',
+            r'\bمعقول\b',
+            r'\bكالمتوقع\b',
+            r'\bزي\s*العادة\b',
+            r'\bنص\s*نص\b',
+            r'\bلا\s*شكوى\b',
+            r'\bممكن\s*أفضل\b',
+            r'\bمحتاج\s*تحسين\b',
+        ]
         
         # Download NLTK data if available
         if NLTK_AVAILABLE:
@@ -514,25 +582,267 @@ class SentimentAnalyzer:
             # Check for neutral indicators (low confidence or mixed signals)
             text_lower = text.lower()
             
-            # Detect neutral/mixed patterns
-            neutral_patterns = [
-                r'\b(okay|ok|alright|average|so-so|decent|acceptable|fair|moderate)\b',
-                r'\b(could be better|nothing special|not bad|not great)\b',
-                r'\b(good but|nice but|great but).*(bad|poor|disappointing|problem)',
-                r'\b(bad|poor|terrible).*(but|however).*(good|nice|great|helpful)',
-                r'\bعادي\b|\bمقبول\b|\bمتوسط\b'
+            # ============================================================
+            # FOR LONG FEEDBACKS: Use weighted scoring approach
+            # Short feedbacks (< 50 words): Use pattern matching
+            # Long feedbacks (>= 50 words): Count positive vs negative
+            # ============================================================
+            word_count = len(text_lower.split())
+            
+            if word_count >= 50:
+                # LONG FEEDBACK: Use weighted scoring
+                
+                # Strong positive indicators (high weight)
+                strong_positive = ['excellent', 'fantastic', 'amazing', 'wonderful', 'outstanding', 
+                                   'exceptional', 'superb', 'brilliant', 'immaculate', 'perfect', 'best',
+                                   'very good', 'really good', 'pretty good', 'quite good',
+                                   'staff very good', 'service very good', 'very nice', 'really nice',
+                                   'above average', 'well done', 'highly recommend']
+                
+                # Medium positive indicators
+                medium_positive = ['great', 'lovely', 'impressed', 'impressive', 'professional',
+                                   'comfortable', 'recommend', 'smooth', 'spacious', 'roomy', 'ample',
+                                   'enjoyed', 'love', 'loved', 'no complaints', 'on time', 'early']
+                
+                # Weak positive (don't count as strongly)
+                weak_positive = ['good', 'nice', 'pleasant', 'friendly', 'helpful', 'clean', 
+                                 'acceptable', 'ok', 'decent', 'fine', 'new']
+                
+                # Strong negative indicators (high weight)
+                strong_negative = ['terrible', 'horrible', 'awful', 'worst', 'disgusting', 
+                                   'unacceptable', 'nightmare', 'avoid', 'never again', 
+                                   'biggest problem', 'not friendly at all', 'very poor',
+                                   'never fly', 'never recommend', 'waste of money', 'rip off']
+                
+                # Medium negative indicators
+                medium_negative = ['disappointed', 'disappointing', 'poor', 'rude', 'unprofessional',
+                                   'dirty', 'filthy', 'delayed', 'lost', 'problem', 'disinterested',
+                                   'apathetic', 'incompetent', 'impersonal', 'not friendly', 'bad']
+                
+                # Weak negative (don't count as strongly)
+                weak_negative = ['tired', 'tatty', 'cramped', 'uncomfortable', 'late', 
+                                 'limited', 'below', 'ordinary', 'older plane', 'old plane']
+                
+                # Helper function - simple contains but avoid substring matches
+                def score_text(word_list, text, weight):
+                    score = 0
+                    for word in word_list:
+                        if ' ' in word:
+                            # Phrase - direct match
+                            if word in text:
+                                score += weight
+                        else:
+                            # Single word - check it's not part of another word
+                            # Use simple spacing check
+                            patterns = [
+                                f' {word} ', f' {word}.', f' {word},', f' {word}!',
+                                f' {word}-', f'{word} ', f' {word}\n', f' {word}:'
+                            ]
+                            if any(p in f' {text} ' for p in patterns):
+                                score += weight
+                    return score
+                
+                # Count occurrences with weights
+                pos_score = 0
+                neg_score = 0
+                
+                pos_score += score_text(strong_positive, text_lower, 3)
+                pos_score += score_text(medium_positive, text_lower, 2)
+                pos_score += score_text(weak_positive, text_lower, 0.5)
+                
+                neg_score += score_text(strong_negative, text_lower, 4)
+                neg_score += score_text(medium_negative, text_lower, 2)
+                neg_score += score_text(weak_negative, text_lower, 0.5)
+                
+                # Check for explicit neutral phrases
+                neutral_phrases = [
+                    'nothing bad but nothing', 'nothing too good', 'nothing special',
+                    'average experience', 'alright nothing bad', 'not bad not great',
+                    'could be better could be worse', 'mixed feelings', 'pros and cons'
+                ]
+                has_neutral_phrase = any(phrase in text_lower for phrase in neutral_phrases)
+                
+                # Determine sentiment based on score difference
+                score_diff = pos_score - neg_score
+                total_score = max(pos_score + neg_score, 1)
+                
+                # Calculate ratio of smaller to larger score
+                if total_score > 0 and max(pos_score, neg_score) > 0:
+                    ratio = min(pos_score, neg_score) / max(pos_score, neg_score)
+                else:
+                    ratio = 0
+                
+                # Balanced = ratio is close (both sides have comparable weight)
+                # ratio >= 0.5 means smaller score is at least 50% of larger
+                # AND the difference is not too extreme
+                is_balanced = ratio >= 0.5 and abs(score_diff) <= 6
+                
+                if has_neutral_phrase:
+                    # Explicit neutral phrase found
+                    ml_sentiment = 'neutral'
+                    confidence = 0.75
+                elif is_balanced:
+                    # Both positive and negative elements present and close
+                    ml_sentiment = 'neutral'
+                    confidence = 0.70
+                elif score_diff >= 7:
+                    # Clearly more positive (need strong majority)
+                    ml_sentiment = 'positive'
+                    confidence = min(0.95, 0.70 + (score_diff / total_score) * 0.25)
+                elif score_diff <= -4:
+                    # Clearly more negative
+                    ml_sentiment = 'negative'
+                    confidence = min(0.95, 0.70 + (abs(score_diff) / total_score) * 0.25)
+                elif is_balanced:
+                    # Balanced feedback = neutral
+                    ml_sentiment = 'neutral'
+                    confidence = 0.70
+                else:
+                    # Slight lean - use ML result with lower confidence
+                    confidence = min(confidence, 0.65)
+                
+                return ml_sentiment, confidence
+            
+            # ============================================================
+            # SHORT FEEDBACKS: Use pattern matching (original logic)
+            # ============================================================
+            
+            # MIXED SENTIMENT PATTERNS - Check FIRST (highest priority)
+            # These override both positive and negative classifications
+            mixed_sentiment_patterns = [
+                # Positive followed by "but/however" + negative
+                r'\b(good|great|nice|excellent|friendly|helpful|comfortable|pleasant|satisfied)\b.{0,40}\b(but|however|although|though|yet)\b.{0,40}\b(bad|poor|terrible|delayed|late|problem|issue|disappointing|unacceptable|awful|horrible|worst|uncomfortable)\b',
+                # Negative followed by "but/however" + positive  
+                r'\b(bad|poor|terrible|delayed|late|problem|issue|disappointing|unacceptable|uncomfortable)\b.{0,40}\b(but|however|although|though|yet)\b.{0,40}\b(good|great|nice|excellent|friendly|helpful|pleasant)\b',
+                # Specific mixed patterns with variations
+                r'\b(liked|enjoyed|good|nice|great)\b.{0,30}(but|however).{0,30}(didn\'t|don\'t|not|problem|issue|delay|late|bad|poor)\b',
+                r'\b(didn\'t|don\'t|not|problem|issue|delay|late|bad)\b.{0,30}(but|however).{0,30}(liked|enjoyed|good|nice|great)\b',
+                # "X was Y but Z was W" patterns - extended with "however"
+                r'\b(\w+)\s+(was|were)\s+(nice|good|great|friendly)\b.{0,40}\b(but|however)\b.{0,40}\b(was|were)\s+(bad|terrible|unacceptable|delayed|late|awful|uncomfortable)\b',
+                r'\b(\w+)\s+(was|were)\s+(bad|terrible|awful|delayed|uncomfortable)\b.{0,40}\b(but|however)\b.{0,40}\b(was|were)\s+(nice|good|great|friendly)\b',
+                # Double negation patterns (wasn't X... wasn't Y) - NEUTRAL
+                r'\b(wasn\'t|weren\'t|isn\'t|aren\'t)\s+\w+\s+.{0,30}(wasn\'t|weren\'t|isn\'t|aren\'t)\s+\w+\b',
+                # "wasn't terrible but wasn't amazing" type patterns
+                r'\b(wasn\'t|weren\'t)\s+(terrible|awful|bad|horrible).{0,30}(wasn\'t|weren\'t)\s+(great|amazing|excellent|good)\b',
+                r'\b(wasn\'t|weren\'t)\s+(great|amazing|excellent|good).{0,30}(wasn\'t|weren\'t)\s+(terrible|awful|bad|horrible)\b',
+                # Room for improvement patterns
+                r'\broom\s+for\s+improvement\b',
+                r'\bcould\s+(use|have)\s+(some\s+)?improvement\b',
+                r'\bimprovement\s+.{0,20}(but|however).{0,20}(not\s+)?(terrible|bad|awful)\b',
             ]
             
-            has_neutral_pattern = any(re.search(pattern, text_lower) for pattern in neutral_patterns)
+            is_mixed_sentiment = any(re.search(pattern, text_lower) for pattern in mixed_sentiment_patterns)
             
-            # If confidence is low OR neutral patterns detected, mark as neutral
-            if has_neutral_pattern:
+            if is_mixed_sentiment:
                 ml_sentiment = 'neutral'
-                confidence = min(confidence, 0.70)
-            elif confidence < 0.65 and ml_sentiment != 'neutral':
-                # Low confidence - might be neutral
-                ml_sentiment = 'neutral'
-                confidence = 0.60
+                confidence = 0.75  # Mixed signals = neutral with decent confidence
+            else:
+                # ============================================================
+                # STRONG NEGATIVE PATTERNS - Only if NOT mixed sentiment
+                # ============================================================
+                strong_negative_patterns = [
+                    r'\bnever\s+(recommend|again|fly|use|come\s*back|return|book|trust)\b',
+                    r'\b(would\s*not|wouldn\'t|won\'t)\s+recommend\b',
+                    r'\b(avoid|stay\s*away|don\'t\s*use|waste\s*of)\b',
+                    r'\b(worst|terrible|horrible|awful|disgusting)\b(?!.{0,30}\b(but|however|although)\b)',  # Not followed by "but"
+                    r'\b(never\s+again|total\s+disaster|complete\s+failure)\b',
+                    r'\b(rip\s*off|scam|fraud|nightmare)\b'
+                ]
+                
+                is_strong_negative = any(re.search(pattern, text_lower) for pattern in strong_negative_patterns)
+                
+                if is_strong_negative:
+                    ml_sentiment = 'negative'
+                    confidence = max(confidence, 0.85)
+                else:
+                    # ============================================================
+                    # ENHANCED NEUTRAL PATTERNS - Comprehensive detection
+                    # ============================================================
+                    
+                    # Use class-level patterns if available, otherwise define inline
+                    if hasattr(self, 'neutral_patterns_en'):
+                        neutral_patterns = self.neutral_patterns_en + self.neutral_patterns_ar
+                    else:
+                        neutral_patterns = [
+                            r'\b(okay|ok|alright|average|so-so|decent|acceptable|fair|moderate)\b',
+                            r'\b(could be better|nothing special|not bad|not great)\b',
+                            r'\bعادي\b|\bمقبول\b|\bمتوسط\b'
+                        ]
+                    
+                    # Additional in-line patterns for comprehensive neutral detection
+                    extended_neutral_patterns = [
+                        # Basic neutral words
+                        r'\b(okay|ok|alright|average|so-so|decent|acceptable|fair|moderate|fine)\b',
+                        # "It was X" patterns
+                        r'\b(it\s+was|was|is|are)\s+(okay|ok|fine|decent|average|alright|acceptable)\b',
+                        # "Not bad/great" patterns (neutral, not strongly positive/negative)
+                        r'\bnot\s+(bad|terrible|great|amazing)\b(?!.{0,15}(but|however))',
+                        # "Could be better/worse" patterns
+                        r'\bcould\s+(be|have\s+been)\s+(better|worse)\b',
+                        r'\broom\s+for\s+improvement\b',
+                        r'\bcould\s+improve\b',
+                        # Expectation patterns
+                        r'\b(met|meets)\s+(my\s+)?expectations?\b',
+                        r'\bas\s+(i\s+)?expected\b',
+                        r'\bnothing\s+(special|extraordinary|remarkable|to\s+write\s+home\s+about)\b',
+                        # Hedging language
+                        r'\b(i\s+guess|i\s+suppose)\s+(it\'?s?\s+)?(okay|fine|alright)\b',
+                        # "Just" patterns (minimizing)
+                        r'\bjust\s+(okay|fine|average|normal)\b',
+                        # Neither patterns
+                        r'\bneither\s+good\s+nor\s+bad\b',
+                        r'\bneither\s+great\s+nor\s+terrible\b',
+                        # Specific neutral phrases
+                        r'\b(no\s+complaints?|can\'t\s+complain|nothing\s+wrong)\b',
+                        r'\b(did\s+the\s+job|got\s+the\s+job\s+done|served\s+its\s+purpose)\b',
+                        r'\b(standard|typical|normal)\s+(service|flight|experience)\b',
+                        # Quantified neutral (middle ratings)
+                        r'\b(3|three)\s*(out\s+of|/)\s*(5|five)\b',
+                        r'\b(5|6|7)\s*(out\s+of|/)\s*10\b',
+                        # Arabic neutral patterns
+                        r'\bعادي\s*(جدا|جداً)?\b',
+                        r'\bمقبول\b',
+                        r'\bمتوسط\b',
+                        r'\bلا\s*بأس\b',
+                        r'\bمعقول\b',
+                        r'\bنص\s*نص\b',
+                        r'\bزي\s*العادة\b',
+                        r'\bكالمتوقع\b',
+                    ]
+                    
+                    # Combine all neutral patterns
+                    all_neutral_patterns = neutral_patterns + extended_neutral_patterns
+                    
+                    has_neutral_pattern = any(re.search(pattern, text_lower) for pattern in all_neutral_patterns)
+                    
+                    # Also check for neutral word presence (both English and Arabic)
+                    has_neutral_words = False
+                    text_words = set(text_lower.split())
+                    
+                    # Check English neutral words
+                    if hasattr(self, 'neutral_words_en'):
+                        neutral_word_count_en = len(text_words.intersection(self.neutral_words_en))
+                        if neutral_word_count_en >= 1:
+                            has_neutral_words = True
+                    
+                    # Check Arabic neutral words (important for Arabic text!)
+                    if hasattr(self, 'neutral_words_ar') and language == "AR":
+                        neutral_word_count_ar = len(text_words.intersection(self.neutral_words_ar))
+                        if neutral_word_count_ar >= 1:
+                            has_neutral_words = True
+                    
+                    # Check for low confidence from ML model (indicates uncertainty)
+                    low_ml_confidence = confidence < 0.60
+                    
+                    # If neutral patterns OR neutral words (for Arabic always, for English if low confidence)
+                    if has_neutral_pattern:
+                        ml_sentiment = 'neutral'
+                        confidence = 0.70
+                    elif has_neutral_words and (language == "AR" or low_ml_confidence):
+                        # For Arabic, neutral words are strong indicators
+                        # For English, only if ML is uncertain
+                        ml_sentiment = 'neutral'
+                        confidence = 0.70 if language == "AR" else 0.60
             
             # Apply negation handling - this is crucial!
             # If we detect negation and the ML model doesn't catch it, override

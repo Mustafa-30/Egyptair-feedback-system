@@ -210,6 +210,17 @@ async def get_sentiment_trends(
             if row.sentiment:
                 trends[week_str][row.sentiment] = row.count
         
+        # Fill in missing weeks to create continuous data
+        # Get start and end week numbers
+        from datetime import datetime, timedelta
+        current = start_date
+        end = end_date
+        while current <= end:
+            week_str = current.strftime('%Y-W%W')
+            if week_str not in trends:
+                trends[week_str] = {"date": week_str, "positive": 0, "negative": 0, "neutral": 0}
+            current += timedelta(days=7)
+        
         sorted_trends = sorted(trends.values(), key=lambda x: x["date"])
     else:
         # Daily aggregation with filled dates

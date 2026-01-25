@@ -18,7 +18,7 @@ import logo from '../assets/4f19bd0819365f42899975f9aa6f67f1119ef3b5.png';
 interface LayoutProps {
   children: ReactNode;
   currentPage: string;
-  onNavigate: (page: string) => void;
+  onNavigate: (page: string, filters?: Record<string, string>) => void;
 }
 
 export function Layout({ children, currentPage, onNavigate }: LayoutProps) {

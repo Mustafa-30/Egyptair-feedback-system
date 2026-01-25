@@ -3,7 +3,7 @@ import { Upload, File, X, CheckCircle, XCircle, Cloud, Download, AlertCircle } f
 import { uploadApi, ApiError } from '../lib/api';
 
 interface UploadFeedbackProps {
-  onNavigate?: (page: string) => void;
+  onNavigate?: (page: string, filters?: Record<string, string>) => void;
 }
 
 interface PreviewRow {

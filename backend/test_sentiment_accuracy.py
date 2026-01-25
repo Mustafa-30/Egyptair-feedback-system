@@ -29,14 +29,49 @@ test_cases = [
     ("الخدمة ليست جيدة", "negative"),
     ("لم تكن الرحلة مريحة", "negative"),
     
-    # Neutral feedback
+    # ========== EXPANDED NEUTRAL TEST CASES ==========
+    # Basic neutral words
     ("The flight was okay, nothing special", "neutral"),
     ("Average service, could be better", "neutral"),
     ("الرحلة عادية", "neutral"),
     
-    # Mixed/Complex
+    # "Fine/Decent" patterns
+    ("It was fine, nothing to complain about", "neutral"),
+    ("Decent flight, just average really", "neutral"),
+    ("The service was acceptable", "neutral"),
+    
+    # "Not bad/Not great" patterns
+    ("Not bad, not great either", "neutral"),
+    ("It wasn't terrible but it wasn't amazing", "neutral"),
+    
+    # Expectation-based neutral
+    ("Met my expectations, nothing more nothing less", "neutral"),
+    ("As expected, standard service", "neutral"),
+    ("Nothing special about this flight", "neutral"),
+    
+    # Hedging language
+    ("I guess it was okay", "neutral"),
+    ("The flight was just fine", "neutral"),
+    
+    # "Could be better" patterns
+    ("Could be better, but overall acceptable", "neutral"),
+    ("Room for improvement but not terrible", "neutral"),
+    
+    # Balanced statements
+    ("No complaints, did the job", "neutral"),
+    ("Can't complain, got me there safely", "neutral"),
+    
+    # Arabic neutral patterns
+    ("الخدمة لا بأس بها", "neutral"),
+    ("رحلة معقولة", "neutral"),
+    ("الطائرة كانت عادية جداً", "neutral"),
+    ("كالمتوقع، لا شيء مميز", "neutral"),
+    
+    # ========== MIXED SENTIMENT (→ NEUTRAL) ==========
     ("Good flight but bad food", "neutral"),
     ("Staff was nice but the delay was unacceptable", "neutral"),
+    ("The crew was friendly however the seats were uncomfortable", "neutral"),
+    ("Nice plane but terrible service", "neutral"),
 ]
 
 print("=" * 80)

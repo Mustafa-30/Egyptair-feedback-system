@@ -5,6 +5,7 @@ import { feedbackApi, getAccessToken, Feedback as ApiFeedback, ApiError } from '
 
 interface FeedbackListProps {
   onViewFeedback: (feedback: Feedback) => void;
+  initialFilters?: Record<string, string>;
 }
 
 // Debounce hook
@@ -41,9 +42,9 @@ function mapApiFeedback(apiFeedback: ApiFeedback): Feedback {
   };
 }
 
-export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
+export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackListProps) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSentiment, setSelectedSentiment] = useState('all');
+  const [selectedSentiment, setSelectedSentiment] = useState(initialFilters.sentiment || 'all');
   const [selectedLanguage, setSelectedLanguage] = useState('all');
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
@@ -68,6 +69,14 @@ export function FeedbackList({ onViewFeedback }: FeedbackListProps) {
   const [editForm, setEditForm] = useState({ status: '', priority: '' });
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
+
+  // Update filters when initialFilters change (e.g., navigating from dashboard)
+  useEffect(() => {
+    if (initialFilters.sentiment) {
+      setSelectedSentiment(initialFilters.sentiment);
+      setCurrentPage(1); // Reset to first page when filter changes
+    }
+  }, [initialFilters.sentiment]);
 
   // Fetch feedback from API
   const fetchFeedback = useCallback(async () => {

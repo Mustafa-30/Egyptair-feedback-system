@@ -15,6 +15,7 @@ function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [selectedFeedback, setSelectedFeedback] = useState<Feedback | null>(null);
+  const [pageFilters, setPageFilters] = useState<Record<string, string>>({});
 
   // Show loading state while checking session
   if (isLoading) {
@@ -36,6 +37,12 @@ function AppContent() {
     setSelectedFeedback(null);
   };
 
+  // Handle navigation with optional filters
+  const handleNavigate = (page: string, filters?: Record<string, string>) => {
+    setCurrentPage(page);
+    setPageFilters(filters || {});
+  };
+
   if (!isAuthenticated) {
     return <LoginPage />;
   }
@@ -43,11 +50,11 @@ function AppContent() {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard onNavigate={setCurrentPage} />;
+        return <Dashboard onNavigate={handleNavigate} />;
       case 'upload':
-        return <UploadFeedback onNavigate={setCurrentPage} />;
+        return <UploadFeedback onNavigate={handleNavigate} />;
       case 'feedback':
-        return <FeedbackList onViewFeedback={handleViewFeedback} />;
+        return <FeedbackList onViewFeedback={handleViewFeedback} initialFilters={pageFilters} />;
       case 'reports':
         return <Reports />;
       case 'users':
@@ -55,13 +62,13 @@ function AppContent() {
       case 'settings':
         return <Settings />;
       default:
-        return <Dashboard onNavigate={setCurrentPage} />;
+        return <Dashboard onNavigate={handleNavigate} />;
     }
   };
 
   return (
     <>
-      <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
+      <Layout currentPage={currentPage} onNavigate={handleNavigate}>
         {renderPage()}
       </Layout>
       <FeedbackDetailModal 

@@ -164,7 +164,7 @@ async def get_dashboard_stats(
 @router.get("/sentiment-trends")
 async def get_sentiment_trends(
     days: int = Query(30, ge=7, le=365),
-    aggregate: str = Query("auto", regex="^(auto|daily|weekly)$"),
+    aggregate: str = Query("auto", pattern="^(auto|daily|weekly)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):

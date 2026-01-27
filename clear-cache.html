@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clear Browser Cache - EgyptAir Feedback</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 40px; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #003d82; }
+        button { background: #003d82; color: white; padding: 12px 24px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; margin: 10px 5px; }
+        button:hover { background: #002952; }
+        .success { color: green; font-weight: bold; margin-top: 20px; }
+        .info { background: #e3f2fd; padding: 15px; border-radius: 4px; margin: 20px 0; }
+        code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Clear Browser Cache & Storage</h1>
+        
+        <div class="info">
+            <strong>If you're seeing "Invalid credentials" error:</strong>
+            <ol>
+                <li>Click the button below to clear cache</li>
+                <li>Wait for confirmation message</li>
+                <li>Close this tab</li>
+                <li>Go back to <a href="http://localhost:3000">http://localhost:3000</a></li>
+                <li>Login with: <code>admin</code> / <code>admin123</code></li>
+            </ol>
+        </div>
+
+        <button onclick="clearEverything()">🗑️ Clear All Cache & Storage</button>
+        <button onclick="testLogin()">🧪 Test Login API</button>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        function clearEverything() {
+            // Clear localStorage
+            localStorage.clear();
+            
+            // Clear sessionStorage
+            sessionStorage.clear();
+            
+            // Clear cookies
+            document.cookie.split(";").forEach(function(c) { 
+                document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
+            });
+            
+            document.getElementById('result').innerHTML = `
+                <div class="success">
+                    ✅ Cache Cleared Successfully!<br><br>
+                    - LocalStorage: Cleared<br>
+                    - SessionStorage: Cleared<br>
+                    - Cookies: Cleared<br><br>
+                    <strong>Now close this tab and go to:</strong><br>
+                    <a href="http://localhost:3000" target="_blank" style="font-size: 18px;">http://localhost:3000</a><br><br>
+                    Login: admin / admin123
+                </div>
+            `;
+        }
+
+        async function testLogin() {
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: 'admin',
+                        password: 'admin123'
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('result').innerHTML = `
+                        <div class="success">
+                            ✅ API Login Test SUCCESSFUL!<br><br>
+                            Token received: ${data.access_token.substring(0, 30)}...<br><br>
+                            <strong>The backend is working correctly.</strong><br>
+                            If you still can't login from the main app:<br>
+                            1. Click "Clear All Cache & Storage" button above<br>
+                            2. Hard refresh the app (Ctrl+Shift+R)<br>
+                            3. Try logging in again
+                        </div>
+                    `;
+                } else {
+                    const error = await response.json();
+                    document.getElementById('result').innerHTML = `
+                        <div style="color: red; margin-top: 20px;">
+                            ❌ API Login Test FAILED!<br><br>
+                            Error: ${error.detail}<br><br>
+                            Run: cd backend && python reset_password.py
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = `
+                    <div style="color: red; margin-top: 20px;">
+                        ❌ Cannot connect to backend!<br><br>
+                        Error: ${error.message}<br><br>
+                        Make sure backend is running on port 8000
+                    </div>
+                `;
+            }
+        }
+    </script>
+</body>
+</html>

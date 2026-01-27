@@ -52,7 +52,15 @@ npm run dev
 
 ## ⚠️ Troubleshooting
 
-**"Invalid credentials" or connection errors?**
+**"Invalid credentials" error?**
+```bash
+# Reset admin password to admin123:
+cd backend
+python reset_password.py
+```
+Then login with: **admin** / **admin123**
+
+**Connection errors?**
 1. Make sure BOTH servers are running (check terminal windows)
 2. Backend MUST be on port **8000** (not 8001)
 3. Frontend expects backend at `http://localhost:8000`

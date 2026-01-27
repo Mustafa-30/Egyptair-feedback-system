@@ -39,12 +39,12 @@ def seed_users(db: Session):
         email="admin@egyptair.com",
         username="admin",
         name="System Administrator",
-        hashed_password=get_password_hash("admin"),
+        hashed_password=get_password_hash("admin123"),
         role=UserRole.ADMIN.value,
         status=UserStatus.ACTIVE.value
     )
     db.add(admin)
-    print("  ✅ Created admin user (username: admin, password: admin)")
+    print("  ✅ Created admin user (username: admin, password: admin123)")
     print("  ℹ️  Create additional users through the User Management page")
     
     db.commit()

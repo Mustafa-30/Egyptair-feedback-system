@@ -300,6 +300,21 @@ export const analyticsApi = {
     const query = days ? `?days=${days}` : '';
     return apiFetch<ComparisonData>(`/analytics/comparison${query}`);
   },
+
+  getNpsScore: (days?: number) => {
+    const query = days ? `?days=${days}` : '';
+    return apiFetch<NpsData>(`/analytics/nps-score${query}`);
+  },
+
+  getNpsHistory: (months?: number) => {
+    const query = months ? `?months=${months}` : '';
+    return apiFetch<NpsHistoryData>(`/analytics/nps-history${query}`);
+  },
+
+  getTopRoutes: (limit?: number) => {
+    const query = limit ? `?limit=${limit}` : '';
+    return apiFetch<RouteData[]>(`/analytics/top-routes${query}`);
+  },
 };
 
 // Upload API
@@ -591,6 +606,39 @@ export interface RouteData {
   positive: number;
   negative: number;
   neutral: number;
+  avg_rating?: number;
+  positive_pct?: number;
+  negative_pct?: number;
+}
+
+export interface NpsData {
+  nps_score: number;
+  previous_nps: number;
+  change: number;
+  promoters: number;
+  passives: number;
+  detractors: number;
+  promoter_pct: number;
+  passive_pct: number;
+  detractor_pct: number;
+  total_responses: number;
+  period_days: number;
+  grade: string;
+  industry_benchmark: number;
+}
+
+export interface NpsHistoryItem {
+  month: string;
+  nps: number;
+  total_responses: number;
+  promoters: number;
+  detractors: number;
+}
+
+export interface NpsHistoryData {
+  history: NpsHistoryItem[];
+  target_nps: number;
+  industry_benchmark: number;
 }
 
 export interface CsatData {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, Target, Plane, CheckCircle, TrendingDown, Download, BarChart3, ArrowUpRight, ArrowDownRight } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
-import { analyticsApi, getAccessToken, TrendData, TopComplaint, RouteData, CsatData, ResponseTimeData, ComparisonData } from '../lib/api';
+import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, Target, Plane, CheckCircle, TrendingDown, Download, BarChart3, ArrowUpRight, ArrowDownRight, Star, Users } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar, LineChart, Line, ReferenceLine } from 'recharts';
+import { analyticsApi, getAccessToken, TrendData, TopComplaint, RouteData, CsatData, ResponseTimeData, ComparisonData, NpsData, NpsHistoryData } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
 interface DashboardProps {
@@ -204,7 +204,244 @@ function ResponseTimeCard({ data }: { data: ResponseTimeData | null }) {
   );
 }
 
-// Feedback by Route Chart
+// NPS Score Gauge Component
+function NPSGauge({ data }: { data: NpsData | null }) {
+  if (!data) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[280px] text-gray-500">
+        <Users className="h-12 w-12 mb-2 opacity-50" />
+        <p>Loading NPS data...</p>
+      </div>
+    );
+  }
+
+  const { nps_score, grade, change, promoter_pct, passive_pct, detractor_pct, industry_benchmark } = data;
+  
+  // NPS color based on score
+  const getNpsColor = (score: number) => {
+    if (score >= 50) return { main: '#10B981', bg: 'bg-green-100', text: 'text-green-600' };
+    if (score >= 30) return { main: '#3B82F6', bg: 'bg-blue-100', text: 'text-blue-600' };
+    if (score >= 0) return { main: '#F59E0B', bg: 'bg-yellow-100', text: 'text-yellow-600' };
+    return { main: '#EF4444', bg: 'bg-red-100', text: 'text-red-600' };
+  };
+  
+  const colors = getNpsColor(nps_score);
+  
+  // Calculate gauge position (-100 to 100 mapped to 0-180 degrees)
+  const gaugeRotation = ((nps_score + 100) / 200) * 180 - 90;
+  
+  return (
+    <div className="flex flex-col items-center p-4">
+      {/* NPS Gauge */}
+      <div className="relative w-48 h-28 mb-4">
+        {/* Background arc */}
+        <svg className="w-full h-full" viewBox="0 0 200 110">
+          {/* Background gradient arc */}
+          <defs>
+            <linearGradient id="npsGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#EF4444" />
+              <stop offset="35%" stopColor="#F59E0B" />
+              <stop offset="65%" stopColor="#3B82F6" />
+              <stop offset="100%" stopColor="#10B981" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M 20 100 A 80 80 0 0 1 180 100"
+            fill="none"
+            stroke="url(#npsGradient)"
+            strokeWidth="16"
+            strokeLinecap="round"
+          />
+          {/* Industry benchmark marker */}
+          <line
+            x1="100"
+            y1="20"
+            x2="100"
+            y2="35"
+            stroke="#6B7280"
+            strokeWidth="2"
+            transform={`rotate(${((industry_benchmark + 100) / 200) * 180 - 90}, 100, 100)`}
+          />
+          {/* Needle */}
+          <line
+            x1="100"
+            y1="100"
+            x2="100"
+            y2="30"
+            stroke={colors.main}
+            strokeWidth="4"
+            strokeLinecap="round"
+            transform={`rotate(${gaugeRotation}, 100, 100)`}
+            className="transition-transform duration-1000"
+          />
+          <circle cx="100" cy="100" r="8" fill={colors.main} />
+        </svg>
+        {/* Score display */}
+        <div className="absolute bottom-0 left-1/2 transform -translate-x-1/2 text-center">
+          <span className={`text-3xl font-bold ${colors.text}`}>{nps_score}</span>
+          <span className="text-xs text-gray-500 block">NPS Score</span>
+        </div>
+      </div>
+      
+      {/* Labels */}
+      <div className="flex justify-between w-full text-xs text-gray-400 mb-3">
+        <span>-100</span>
+        <span>0</span>
+        <span>+100</span>
+      </div>
+      
+      {/* Grade Badge */}
+      <span className={`px-3 py-1 rounded-full text-sm font-medium ${colors.bg} ${colors.text} mb-3`}>
+        {grade}
+      </span>
+      
+      {/* Change indicator */}
+      <div className={`text-sm flex items-center gap-1 mb-4 ${change >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+        {change >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+        <span>{change >= 0 ? '+' : ''}{change} pts vs last period</span>
+      </div>
+      
+      {/* Breakdown bars */}
+      <div className="w-full space-y-2">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-green-600 font-medium">Promoters</span>
+          <span>{promoter_pct}%</span>
+        </div>
+        <div className="w-full h-2 bg-gray-100 rounded-full flex overflow-hidden">
+          <div className="h-full bg-green-500 transition-all duration-500" style={{ width: `${promoter_pct}%` }} />
+          <div className="h-full bg-yellow-400 transition-all duration-500" style={{ width: `${passive_pct}%` }} />
+          <div className="h-full bg-red-500 transition-all duration-500" style={{ width: `${detractor_pct}%` }} />
+        </div>
+        <div className="flex justify-between text-xs text-gray-500">
+          <span>Promoters: {promoter_pct}%</span>
+          <span>Passives: {passive_pct}%</span>
+          <span>Detractors: {detractor_pct}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// NPS History Line Chart
+function NPSHistoryChart({ data }: { data: NpsHistoryData | null }) {
+  if (!data || data.history.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[300px] text-gray-500">
+        <TrendingUp className="h-12 w-12 mb-2 opacity-50" />
+        <p>No NPS history available</p>
+      </div>
+    );
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <LineChart data={data.history}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+        <XAxis dataKey="month" stroke="#6B7280" fontSize={12} />
+        <YAxis domain={[-100, 100]} stroke="#6B7280" fontSize={12} />
+        <Tooltip
+          contentStyle={{ borderRadius: '8px', border: '1px solid #E5E7EB' }}
+          formatter={(value: number, name: string) => {
+            if (name === 'nps') return [value, 'NPS Score'];
+            if (name === 'target') return [value, 'Target'];
+            if (name === 'benchmark') return [value, 'Industry Avg'];
+            return [value, name];
+          }}
+        />
+        <Legend />
+        {/* Target line */}
+        <ReferenceLine y={data.target_nps} stroke="#10B981" strokeDasharray="5 5" label={{ value: `Target: ${data.target_nps}`, fill: '#10B981', fontSize: 11 }} />
+        {/* Industry benchmark line */}
+        <ReferenceLine y={data.industry_benchmark} stroke="#6B7280" strokeDasharray="3 3" label={{ value: `Industry: ${data.industry_benchmark}`, fill: '#6B7280', fontSize: 11 }} />
+        {/* NPS line */}
+        <Line
+          type="monotone"
+          dataKey="nps"
+          stroke="#3B82F6"
+          strokeWidth={3}
+          dot={{ r: 6, fill: '#3B82F6' }}
+          activeDot={{ r: 8 }}
+          name="NPS Score"
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Enhanced Top Routes Chart with ratings
+function TopRoutesChart({ data }: { data: RouteData[] }) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[300px] text-gray-500">
+        <Plane className="h-12 w-12 mb-2 opacity-50" />
+        <p>No route data available</p>
+      </div>
+    );
+  }
+
+  // Sort by total and take top 8
+  const topRoutes = [...data]
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 8);
+
+  return (
+    <div className="space-y-3">
+      {topRoutes.map((route, index) => {
+        const rating = route.avg_rating || 0;
+        const positivePct = route.positive_pct || (route.total > 0 ? (route.positive / route.total) * 100 : 0);
+        
+        // Color based on rating
+        const getRatingColor = (r: number) => {
+          if (r >= 4) return 'text-green-600';
+          if (r >= 3) return 'text-blue-600';
+          if (r >= 2) return 'text-yellow-600';
+          return 'text-red-600';
+        };
+
+        return (
+          <div key={route.route} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg transition-colors">
+            {/* Rank */}
+            <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold ${
+              index === 0 ? 'bg-yellow-100 text-yellow-700' :
+              index === 1 ? 'bg-gray-100 text-gray-600' :
+              index === 2 ? 'bg-orange-100 text-orange-700' :
+              'bg-gray-50 text-gray-500'
+            }`}>
+              {index + 1}
+            </div>
+            
+            {/* Route info */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <Plane className="h-4 w-4 text-blue-500" />
+                <span className="font-medium text-gray-800 truncate">{route.route}</span>
+              </div>
+              <div className="text-xs text-gray-500">{route.total} reviews</div>
+            </div>
+            
+            {/* Rating */}
+            <div className="text-right">
+              <div className={`flex items-center gap-1 ${getRatingColor(rating)}`}>
+                <Star className="h-4 w-4 fill-current" />
+                <span className="font-bold">{rating.toFixed(1)}</span>
+              </div>
+              <div className="text-xs text-gray-500">{positivePct.toFixed(0)}% positive</div>
+            </div>
+            
+            {/* Mini sentiment bar */}
+            <div className="w-24 h-2 bg-gray-100 rounded-full flex overflow-hidden">
+              <div className="h-full bg-green-500" style={{ width: `${(route.positive / route.total) * 100}%` }} />
+              <div className="h-full bg-yellow-400" style={{ width: `${(route.neutral / route.total) * 100}%` }} />
+              <div className="h-full bg-red-500" style={{ width: `${(route.negative / route.total) * 100}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Feedback by Route Chart (keep for backward compatibility)
 function FeedbackByRouteChart({ data }: { data: RouteData[] }) {
   if (!data || data.length === 0) {
     return (
@@ -241,6 +478,9 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const [csatData, setCsatData] = useState<CsatData | null>(null);
   const [responseTimeData, setResponseTimeData] = useState<ResponseTimeData | null>(null);
   const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null);
+  const [npsData, setNpsData] = useState<NpsData | null>(null);
+  const [npsHistory, setNpsHistory] = useState<NpsHistoryData | null>(null);
+  const [topRoutes, setTopRoutes] = useState<RouteData[]>([]);
   const [showComparison, setShowComparison] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -251,6 +491,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   // Refs for chart export
   const sentimentChartRef = useRef<HTMLDivElement>(null);
   const trendsChartRef = useRef<HTMLDivElement>(null);
+  const npsChartRef = useRef<HTMLDivElement>(null);
 
   // Fetch dashboard data
   const fetchData = useCallback(async (showRefreshing = false) => {
@@ -276,7 +517,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       if (sentimentFilter !== 'all') statsParams.sentiment = sentimentFilter;
 
       // Fetch all data in parallel
-      const [statsData, trendsData, complaintsData, routesData, csatResult, responseData, comparisonResult] = await Promise.all([
+      const [statsData, trendsData, complaintsData, routesData, csatResult, responseData, comparisonResult, npsResult, npsHistoryResult, topRoutesResult] = await Promise.all([
         analyticsApi.getStats(statsParams).catch(() => null),
         analyticsApi.getTrends({ days: 30 }).catch(() => []),
         analyticsApi.getTopComplaints(5).catch(() => []),
@@ -284,6 +525,9 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         analyticsApi.getCsatScore(30).catch(() => null),
         analyticsApi.getResponseTime().catch(() => null),
         analyticsApi.getComparison(30).catch(() => null),
+        analyticsApi.getNpsScore(30).catch(() => null),
+        analyticsApi.getNpsHistory(6).catch(() => null),
+        analyticsApi.getTopRoutes(10).catch(() => []),
       ]);
 
       if (statsData) {
@@ -296,6 +540,9 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       setCsatData(csatResult);
       setResponseTimeData(responseData);
       setComparisonData(comparisonResult);
+      setNpsData(npsResult);
+      setNpsHistory(npsHistoryResult);
+      setTopRoutes(topRoutesResult);
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -491,17 +738,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           <FileText className="h-4 w-4" />
           Generate Report
         </button>
-        <button
-          onClick={() => setShowComparison(!showComparison)}
-          className={`flex items-center gap-2 px-4 py-2 rounded-md transition-colors ${
-            showComparison 
-              ? 'bg-indigo-100 text-indigo-700 border border-indigo-300' 
-              : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-          }`}
-        >
-          <BarChart3 className="h-4 w-4" />
-          {showComparison ? 'Hide Comparison' : 'Compare Periods'}
-        </button>
       </div>
 
       {/* Loading State */}
@@ -528,92 +764,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
       {!loading && (
         <>
-          {/* Comparison Panel */}
-          {showComparison && comparisonData && (
-            <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg shadow-md p-6 border border-indigo-200">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-indigo-900 flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5" />
-                  Period Comparison (Last {comparisonData.period_days} days vs Previous)
-                </h3>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {/* Total */}
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <p className="text-xs text-gray-500 uppercase mb-1">Total</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xl font-bold">{comparisonData.current_period.stats.total}</span>
-                    <span className={`text-xs flex items-center ${comparisonData.changes.total.direction === 'up' ? 'text-green-600' : 'text-red-600'}`}>
-                      {comparisonData.changes.total.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                      {Math.abs(comparisonData.changes.total.value)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.total}</p>
-                </div>
-                {/* Positive */}
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <p className="text-xs text-gray-500 uppercase mb-1">Positive</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xl font-bold text-green-600">{comparisonData.current_period.stats.positive}</span>
-                    <span className={`text-xs flex items-center ${comparisonData.changes.positive.direction === 'up' ? 'text-green-600' : 'text-red-600'}`}>
-                      {comparisonData.changes.positive.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                      {Math.abs(comparisonData.changes.positive.value)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.positive}</p>
-                </div>
-                {/* Negative */}
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <p className="text-xs text-gray-500 uppercase mb-1">Negative</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xl font-bold text-red-600">{comparisonData.current_period.stats.negative}</span>
-                    <span className={`text-xs flex items-center ${comparisonData.changes.negative.direction === 'down' ? 'text-green-600' : 'text-red-600'}`}>
-                      {comparisonData.changes.negative.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                      {Math.abs(comparisonData.changes.negative.value)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.negative}</p>
-                </div>
-                {/* Neutral */}
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <p className="text-xs text-gray-500 uppercase mb-1">Neutral</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xl font-bold text-amber-600">{comparisonData.current_period.stats.neutral}</span>
-                    <span className={`text-xs flex items-center ${comparisonData.changes.neutral.direction === 'up' ? 'text-blue-600' : 'text-gray-600'}`}>
-                      {comparisonData.changes.neutral.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                      {Math.abs(comparisonData.changes.neutral.value)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.neutral}</p>
-                </div>
-                {/* Positive % */}
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <p className="text-xs text-gray-500 uppercase mb-1">Positive %</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xl font-bold text-green-600">{comparisonData.current_period.stats.positive_pct}%</span>
-                    <span className={`text-xs flex items-center ${comparisonData.changes.positive_pct.direction === 'up' ? 'text-green-600' : 'text-red-600'}`}>
-                      {comparisonData.changes.positive_pct.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                      {Math.abs(comparisonData.changes.positive_pct.value)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.positive_pct}%</p>
-                </div>
-                {/* Negative % */}
-                <div className="bg-white rounded-lg p-4 text-center">
-                  <p className="text-xs text-gray-500 uppercase mb-1">Negative %</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-xl font-bold text-red-600">{comparisonData.current_period.stats.negative_pct}%</span>
-                    <span className={`text-xs flex items-center ${comparisonData.changes.negative_pct.direction === 'down' ? 'text-green-600' : 'text-red-600'}`}>
-                      {comparisonData.changes.negative_pct.direction === 'up' ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                      {Math.abs(comparisonData.changes.negative_pct.value)}%
-                    </span>
-                  </div>
-                  <p className="text-xs text-gray-400">was {comparisonData.previous_period.stats.negative_pct}%</p>
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* KPI Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {/* Total Feedback */}
@@ -868,13 +1018,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                       : 'Last 30 Days'}
                   </p>
                 </div>
-                <button
-                  onClick={() => exportChartAsImage(sentimentChartRef, 'sentiment-distribution')}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
-                  title="Export as image"
-                >
-                  <Download className="h-4 w-4" />
-                </button>
               </div>
               {displayStats.total_feedback === 0 ? (
                 <div className="flex flex-col items-center justify-center h-[300px] text-[#6B7280]">
@@ -913,58 +1056,48 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               )}
             </div>
 
-            {/* Sentiment Trends - Enhanced Area Chart */}
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200" ref={trendsChartRef}>
+            {/* NPS Score Tracker - Replaces Sentiment Trends */}
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200" ref={npsChartRef}>
               <div className="mb-4 flex items-center justify-between">
                 <div>
-                  <h3 className="text-lg font-semibold text-[#1F2937]">Sentiment Trends</h3>
-                  <p className="text-sm text-[#6B7280]">Daily sentiment counts over time</p>
+                  <h3 className="text-lg font-semibold text-[#1F2937]">NPS Score Tracker</h3>
+                  <p className="text-sm text-[#6B7280]">Net Promoter Score trend over months</p>
                 </div>
-                <button
-                  onClick={() => exportChartAsImage(trendsChartRef, 'sentiment-trends')}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
-                  title="Export as image"
-                >
-                  <Download className="h-4 w-4" />
-                </button>
               </div>
-              {displayTrends.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-[300px] text-[#6B7280]">
-                  <TrendingUp className="h-12 w-12 mb-2 opacity-50" />
-                  <p>No trend data available</p>
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={displayTrends}>
-                    <defs>
-                      <linearGradient id="colorPositive" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorNegative" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#EF4444" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#EF4444" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id="colorNeutral" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#F59E0B" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#F59E0B" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                    <XAxis dataKey="date" stroke="#6B7280" fontSize={12} tickMargin={8} />
-                    <YAxis stroke="#6B7280" fontSize={12} />
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #E5E7EB' }} />
-                    <Legend />
-                    <Area type="monotone" dataKey="positive" stroke="#10B981" strokeWidth={2} fillOpacity={1} fill="url(#colorPositive)" name="Positive" connectNulls dot={{ r: 4 }} />
-                    <Area type="monotone" dataKey="negative" stroke="#EF4444" strokeWidth={2} fillOpacity={1} fill="url(#colorNegative)" name="Negative" connectNulls dot={{ r: 4 }} />
-                    <Area type="monotone" dataKey="neutral" stroke="#F59E0B" strokeWidth={2} fillOpacity={1} fill="url(#colorNeutral)" name="Neutral" connectNulls dot={{ r: 4 }} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
+              <NPSHistoryChart data={npsHistory} />
             </div>
           </div>
 
-          {/* Charts Row 2 - Language Distribution & Top Complaints */}
+          {/* Charts Row 2 - NPS Gauge & Top Routes */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* NPS Score Gauge */}
+            <div className="bg-white rounded-lg shadow-md border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-blue-600" />
+                  <h3 className="text-lg font-semibold text-[#1F2937]">Net Promoter Score</h3>
+                </div>
+                <p className="text-sm text-[#6B7280] mt-1">Customer loyalty indicator (last 30 days)</p>
+              </div>
+              <NPSGauge data={npsData} />
+            </div>
+
+            {/* Top Routes with Ratings */}
+            <div className="bg-white rounded-lg shadow-md border border-gray-200">
+              <div className="p-4 border-b border-gray-100">
+                <div className="flex items-center gap-2">
+                  <Plane className="h-5 w-5 text-blue-600" />
+                  <h3 className="text-lg font-semibold text-[#1F2937]">Top Routes by Feedback</h3>
+                </div>
+                <p className="text-sm text-[#6B7280] mt-1">Routes with most reviews and their ratings</p>
+              </div>
+              <div className="p-4 max-h-[350px] overflow-y-auto">
+                <TopRoutesChart data={topRoutes} />
+              </div>
+            </div>
+          </div>
+
+          {/* Charts Row 3 - Language Distribution & Top Complaints */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Language Distribution - Progress Bars */}
             <div className="bg-white rounded-lg shadow-md border border-gray-200">
@@ -992,18 +1125,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               </div>
               <TopComplaints data={topComplaints} onViewAll={handleViewComplaints} />
             </div>
-          </div>
-
-          {/* Charts Row 3 - Feedback by Route */}
-          <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
-            <div className="mb-4">
-              <div className="flex items-center gap-2">
-                <Plane className="h-5 w-5 text-blue-600" />
-                <h3 className="text-lg font-semibold text-[#1F2937]">Feedback by Flight Route</h3>
-              </div>
-              <p className="text-sm text-[#6B7280] mt-1">Sentiment breakdown by flight number</p>
-            </div>
-            <FeedbackByRouteChart data={routeData} />
           </div>
 
 

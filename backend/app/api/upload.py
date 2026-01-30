@@ -51,7 +51,7 @@ async def process_upload(
     text_column: Optional[str] = Query(None, description="Column containing feedback text"),
     analyze_sentiment: bool = Query(True, description="Analyze sentiment for each row"),
     save_to_db: bool = Query(True, description="Save processed data to database"),
-    overwrite_duplicates: bool = Query(False, description="Remove duplicate feedback before inserting"),
+    overwrite_duplicates: bool = Query(True, description="Auto-remove duplicates (always enabled)"),  # Default True
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -159,12 +159,15 @@ async def process_upload(
         print(f"[INFO] Skipped {duplicates_in_file} duplicates within uploaded file")
     
     # ============================================================
-    # SAVE TO DATABASE - Only insert unique, non-duplicate items
+    # SAVE TO DATABASE - Optimized bulk insert for speed
     # ============================================================
     saved_count = 0
     errors = []
     
     if save_to_db:
+        # Use bulk insert for better performance - much faster than individual inserts
+        feedback_objects = []
+        
         for idx, item in enumerate(items_to_insert):
             try:
                 feedback = Feedback(
@@ -185,10 +188,14 @@ async def process_upload(
                     created_by=current_user.id,
                     file_id=feedback_file.file_id  # Link to FeedbackFile
                 )
-                db.add(feedback)
+                feedback_objects.append(feedback)
                 saved_count += 1
             except Exception as e:
                 errors.append({"row": idx + 1, "error": str(e)})
+        
+        # Bulk insert all at once - MUCH faster than individual commits
+        if feedback_objects:
+            db.bulk_save_objects(feedback_objects)
         
         # Update FeedbackFile with processing results
         feedback_file.processed_rows = len(processed_data)
@@ -200,6 +207,7 @@ async def process_upload(
         if errors:
             feedback_file.error_message = f"Errors in {len(errors)} rows: {errors[0]['error'][:100]}..."
         
+        # Single commit for everything - faster
         db.commit()
     
     return {

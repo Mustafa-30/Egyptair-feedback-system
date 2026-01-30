@@ -738,3 +738,220 @@ async def get_period_comparison(
             "negative_pct": calc_change(current_stats["negative_pct"], previous_stats["negative_pct"])
         }
     }
+
+
+@router.get("/nps-score")
+async def get_nps_score(
+    days: int = Query(30, ge=1, le=365),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Calculate Net Promoter Score (NPS) based on sentiment.
+    
+    NPS Mapping for sentiment-based feedback:
+    - Positive sentiment = Promoters (score 9-10)
+    - Neutral sentiment = Passives (score 7-8)  
+    - Negative sentiment = Detractors (score 0-6)
+    
+    NPS = % Promoters - % Detractors
+    """
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=days)
+    
+    # Get sentiment counts for the period
+    results = db.query(
+        Feedback.sentiment,
+        func.count(Feedback.id).label('count')
+    ).filter(
+        Feedback.created_at >= start_date
+    ).group_by(Feedback.sentiment).all()
+    
+    sentiment_dict = {r.sentiment: r.count for r in results if r.sentiment}
+    promoters = sentiment_dict.get("positive", 0)  # Positive = Promoters
+    passives = sentiment_dict.get("neutral", 0)    # Neutral = Passives
+    detractors = sentiment_dict.get("negative", 0) # Negative = Detractors
+    total = promoters + passives + detractors
+    
+    # Calculate NPS
+    if total > 0:
+        promoter_pct = round((promoters / total) * 100, 1)
+        detractor_pct = round((detractors / total) * 100, 1)
+        passive_pct = round((passives / total) * 100, 1)
+        nps_score = round(promoter_pct - detractor_pct)
+    else:
+        promoter_pct = detractor_pct = passive_pct = 0
+        nps_score = 0
+    
+    # Previous period for comparison
+    prev_start = start_date - timedelta(days=days)
+    prev_results = db.query(
+        Feedback.sentiment,
+        func.count(Feedback.id).label('count')
+    ).filter(
+        and_(Feedback.created_at >= prev_start, Feedback.created_at < start_date)
+    ).group_by(Feedback.sentiment).all()
+    
+    prev_dict = {r.sentiment: r.count for r in prev_results if r.sentiment}
+    prev_promoters = prev_dict.get("positive", 0)
+    prev_detractors = prev_dict.get("negative", 0)
+    prev_total = sum(prev_dict.values())
+    
+    if prev_total > 0:
+        prev_promoter_pct = (prev_promoters / prev_total) * 100
+        prev_detractor_pct = (prev_detractors / prev_total) * 100
+        prev_nps = round(prev_promoter_pct - prev_detractor_pct)
+    else:
+        prev_nps = 0
+    
+    nps_change = nps_score - prev_nps
+    
+    # NPS Grade
+    if nps_score >= 70:
+        grade = "World Class"
+    elif nps_score >= 50:
+        grade = "Excellent"
+    elif nps_score >= 30:
+        grade = "Good"
+    elif nps_score >= 0:
+        grade = "Needs Improvement"
+    else:
+        grade = "Critical"
+    
+    return {
+        "nps_score": nps_score,
+        "previous_nps": prev_nps,
+        "change": nps_change,
+        "promoters": promoters,
+        "passives": passives,
+        "detractors": detractors,
+        "promoter_pct": promoter_pct,
+        "passive_pct": passive_pct,
+        "detractor_pct": detractor_pct,
+        "total_responses": total,
+        "period_days": days,
+        "grade": grade,
+        "industry_benchmark": 35  # Airline industry average NPS
+    }
+
+
+@router.get("/nps-history")
+async def get_nps_history(
+    months: int = Query(6, ge=1, le=12),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get NPS score history by month for trend visualization.
+    Returns monthly NPS scores for the specified number of months.
+    """
+    end_date = datetime.utcnow()
+    history = []
+    
+    for i in range(months - 1, -1, -1):
+        # Calculate month boundaries
+        month_end = end_date - timedelta(days=i * 30)
+        month_start = month_end - timedelta(days=30)
+        
+        # Get sentiment counts for this month
+        results = db.query(
+            Feedback.sentiment,
+            func.count(Feedback.id).label('count')
+        ).filter(
+            and_(Feedback.created_at >= month_start, Feedback.created_at < month_end)
+        ).group_by(Feedback.sentiment).all()
+        
+        sentiment_dict = {r.sentiment: r.count for r in results if r.sentiment}
+        promoters = sentiment_dict.get("positive", 0)
+        detractors = sentiment_dict.get("negative", 0)
+        total = sum(sentiment_dict.values())
+        
+        if total > 0:
+            nps = round(((promoters / total) * 100) - ((detractors / total) * 100))
+        else:
+            nps = 0
+        
+        # Format month label
+        month_label = month_end.strftime("%b %Y")
+        
+        history.append({
+            "month": month_label,
+            "nps": nps,
+            "total_responses": total,
+            "promoters": promoters,
+            "detractors": detractors
+        })
+    
+    return {
+        "history": history,
+        "target_nps": 50,  # Target NPS score
+        "industry_benchmark": 35
+    }
+
+
+@router.get("/top-routes")
+async def get_top_routes(
+    limit: int = Query(10, ge=1, le=20),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get top routes with most feedback, including sentiment breakdown and average rating.
+    Enhanced version of feedback-by-route with more useful metrics.
+    """
+    # Get feedback count by flight number with sentiment breakdown
+    results = db.query(
+        Feedback.flight_number,
+        Feedback.sentiment,
+        func.count(Feedback.id).label('count')
+    ).filter(
+        Feedback.flight_number.isnot(None),
+        Feedback.flight_number != ""
+    ).group_by(
+        Feedback.flight_number,
+        Feedback.sentiment
+    ).all()
+    
+    # Process into route-based format
+    routes = {}
+    for row in results:
+        route = row.flight_number
+        if route not in routes:
+            routes[route] = {
+                "route": route,
+                "total": 0,
+                "positive": 0,
+                "negative": 0,
+                "neutral": 0
+            }
+        routes[route]["total"] += row.count
+        if row.sentiment in ["positive", "negative", "neutral"]:
+            routes[route][row.sentiment] = row.count
+    
+    # Calculate average rating and sentiment score for each route
+    for route_data in routes.values():
+        total = route_data["total"]
+        if total > 0:
+            # Calculate sentiment-based rating (1-5 scale)
+            # Positive = 5, Neutral = 3, Negative = 1
+            weighted_sum = (
+                route_data["positive"] * 5 +
+                route_data["neutral"] * 3 +
+                route_data["negative"] * 1
+            )
+            route_data["avg_rating"] = round(weighted_sum / total, 1)
+            route_data["positive_pct"] = round((route_data["positive"] / total) * 100, 1)
+            route_data["negative_pct"] = round((route_data["negative"] / total) * 100, 1)
+        else:
+            route_data["avg_rating"] = 0
+            route_data["positive_pct"] = 0
+            route_data["negative_pct"] = 0
+    
+    # Sort by total feedback count and get top N
+    sorted_routes = sorted(
+        routes.values(),
+        key=lambda x: x["total"],
+        reverse=True
+    )[:limit]
+    
+    return sorted_routes

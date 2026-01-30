@@ -26,7 +26,7 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
     duplicatesSkipped: 0,
     duplicatesInFile: 0 
   });
-  const [overwriteDuplicates, setOverwriteDuplicates] = useState(false);
+  const [overwriteDuplicates, setOverwriteDuplicates] = useState(true); // Always remove duplicates
   const [sendNotification, setSendNotification] = useState(true);
   const [previewData, setPreviewData] = useState<PreviewRow[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -113,13 +113,13 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
     setUploadProgress(0);
     setErrorMessage(null);
 
-    // Start progress animation
+    // Start progress animation (faster for better UX)
     const progressInterval = setInterval(() => {
       setUploadProgress((prev) => {
         if (prev >= 90) return prev; // Pause at 90% until actual completion
-        return prev + 5;
+        return prev + 10; // Faster increments
       });
-    }, 100);
+    }, 30); // Faster animation (30ms instead of 100ms)
 
     try {
       // Call the actual API
@@ -269,15 +269,6 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={overwriteDuplicates}
-                      onChange={(e) => setOverwriteDuplicates(e.target.checked)}
-                      className="w-4 h-4 text-[#003366] border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="text-[#1F2937]">Overwrite duplicate feedback IDs</span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
                       checked={sendNotification}
                       onChange={(e) => setSendNotification(e.target.checked)}
                       className="w-4 h-4 text-[#003366] border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
@@ -285,22 +276,6 @@ export function UploadFeedback({ onNavigate }: UploadFeedbackProps) {
                     <span className="text-[#1F2937]">Send notification when processing completes</span>
                   </label>
                 </div>
-
-                {/* Upload Progress */}
-                {uploadStatus === 'uploading' && (
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[#1F2937]">Uploading... {uploadProgress}% complete</span>
-                      <button className="text-red-600 hover:text-red-700">Cancel</button>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-3">
-                      <div
-                        className="bg-blue-600 h-3 rounded-full transition-all duration-300"
-                        style={{ width: `${uploadProgress}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
 
                 {/* Upload Button */}
                 <button

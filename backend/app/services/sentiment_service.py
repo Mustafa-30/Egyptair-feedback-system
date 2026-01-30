@@ -535,6 +535,119 @@ class SentimentAnalyzer:
         
         return False
     
+    def _verify_arabic_sentiment(self, text: str, ml_sentiment: str, ml_confidence: float) -> Tuple[str, float]:
+        """
+        Verify and correct Arabic sentiment using strong keyword matching.
+        Arabic ML models can be inconsistent, so we use keyword-based verification.
+        """
+        # Strong positive Arabic keywords (clear indicators)
+        strong_positive_ar = [
+            'ممتاز', 'ممتازة', 'رائع', 'رائعة', 'مذهل', 'مذهلة', 'استثنائي', 'استثنائية',
+            'عظيم', 'عظيمة', 'مدهش', 'مدهشة', 'فخم', 'فخمة', 'احترافي', 'احترافية',
+            'محترف', 'محترفة', 'مثالي', 'مثالية', 'أفضل', 'افضل', 'الأفضل',
+            'روعة', 'روعه', 'تحفة', 'تحفه', 'هايل', 'هايله', 'زي الفل',
+            'أحسن', 'احسن', 'سعيد', 'سعيدة', 'راضي', 'راضية', 'مرتاح', 'مرتاحة',
+            'انصح', 'أنصح', 'اوصي', 'أوصي', 'سأعود', 'ساعود', 'سأكرر', 'ساكرر',
+            'ودود', 'ودودة', 'لطيف', 'لطيفة', 'جميل', 'جميلة',
+        ]
+        
+        # Strong negative Arabic keywords (clear indicators)
+        strong_negative_ar = [
+            'سيء', 'سيئة', 'سيئ', 'فظيع', 'فظيعة', 'أسوأ', 'اسوأ', 'الأسوأ',
+            'مخيب', 'مخيبة', 'محبط', 'محبطة', 'كارثة', 'كارثي', 'كارثية',
+            'فاشل', 'فاشلة', 'فشل', 'خيبة', 'مقرف', 'مقرفة',
+            'وقح', 'وقحة', 'فظ', 'فظة', 'سخيف', 'سخيفة', 'مهين', 'مهينة',
+            'بارد', 'باردة', 'بارداً', 'باردًا',  # Cold food
+            'غير شهي', 'طعم سيء', 'جودة سيئة',
+            'مزعج', 'مزعجة', 'قذر', 'قذرة', 'وسخ', 'متسخ', 'متسخة',
+            'ضيق', 'ضيقة', 'غير مريح', 'غير مريحة',
+            'للآمال',  # Part of 'disappointing'
+            'غير متعاون', 'غير متعاونة',
+        ]
+        
+        # Neutral Arabic keywords
+        neutral_ar = [
+            'عادي', 'عادية', 'متوسط', 'متوسطة', 'مقبول', 'مقبولة',
+            'معقول', 'معقولة', 'لا بأس', 'نص نص', 'ماشي',
+        ]
+        
+        # Count keyword occurrences
+        pos_count = 0
+        neg_count = 0
+        neutral_count = 0
+        
+        for word in strong_positive_ar:
+            if word in text:
+                pos_count += 1
+        
+        for word in strong_negative_ar:
+            if word in text:
+                neg_count += 1
+        
+        for word in neutral_ar:
+            if word in text:
+                neutral_count += 1
+        
+        # Check for negation before positive words
+        # Only check immediately adjacent words (within 8 chars - enough for "غير " or "ليست ")
+        has_negated_positive = False
+        for pos_word in ['جيد', 'جيدة', 'ممتاز', 'ممتازة', 'رائع', 'رائعة', 'مريح', 'مريحة']:
+            if pos_word in text:
+                word_pos = text.find(pos_word)
+                # Only look 8 characters back (enough for "غير " or "ليست ")
+                text_before = text[max(0, word_pos - 8):word_pos]
+                # Only check for direct negation words that directly precede the positive word
+                for neg in ['ليست', 'ليس', 'غير', 'مش']:
+                    if neg in text_before:
+                        has_negated_positive = True
+                        neg_count += 2
+                        pos_count = max(0, pos_count - 1)
+                        break
+        
+        # DECISION LOGIC - Order matters!
+        
+        # 1. If neutral words and no strong sentiment, return neutral
+        if neutral_count >= 2 and neg_count == 0 and pos_count == 0:
+            return 'neutral', 0.80
+        
+        if neutral_count >= 1 and neg_count == 0 and pos_count == 0:
+            return 'neutral', 0.75
+        
+        # 2. Strong negative signals
+        if neg_count >= 2:
+            return 'negative', min(0.95, 0.75 + neg_count * 0.05)
+        
+        if neg_count >= 1 and pos_count == 0:
+            return 'negative', 0.85
+        
+        # 3. Negated positive = negative
+        if has_negated_positive:
+            return 'negative', 0.75
+        
+        # 4. Strong positive signals
+        if pos_count >= 2 and pos_count > neg_count:
+            return 'positive', min(0.95, 0.75 + pos_count * 0.05)
+        
+        if pos_count >= 1 and neg_count == 0 and neutral_count == 0:
+            return 'positive', 0.80
+        
+        # 5. Neutral with weak sentiment signals
+        if neutral_count >= 1:
+            return 'neutral', 0.70
+        
+        # 6. Mixed signals
+        if pos_count == neg_count and pos_count > 0:
+            return 'neutral', 0.65
+        
+        # 7. Compare counts
+        if pos_count > neg_count:
+            return 'positive', 0.70
+        elif neg_count > pos_count:
+            return 'negative', 0.70
+        
+        # 8. Fallback to ML with reduced confidence
+        return ml_sentiment, min(ml_confidence, 0.60)
+    
     def analyze_ml_based(self, text: str, language: str = "EN") -> Tuple[str, float]:
         """
         ML-based sentiment analysis using pre-trained models
@@ -581,6 +694,14 @@ class SentimentAnalyzer:
             
             # Check for neutral indicators (low confidence or mixed signals)
             text_lower = text.lower()
+            
+            # ============================================================
+            # ARABIC RULE-BASED VERIFICATION
+            # Arabic ML model (CAMeL) can be inconsistent, so we verify with keywords
+            # ============================================================
+            if language == "AR":
+                ml_sentiment, confidence = self._verify_arabic_sentiment(text, ml_sentiment, confidence)
+                return ml_sentiment, confidence
             
             # ============================================================
             # FOR LONG FEEDBACKS: Use weighted scoring approach

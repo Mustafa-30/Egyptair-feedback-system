@@ -152,26 +152,58 @@ class UploadService:
         # Normalize column names (lowercase and strip whitespace)
         df.columns = [str(col).lower().strip() for col in df.columns]
         
-        # Priority order for text column detection
-        text_columns = ['text', 'feedback', 'comment', 'review', 'message', 'feedback_review', 'description']
+        # FLEXIBLE TEXT COLUMN DETECTION - accepts ANY reasonable column
+        # Priority order for text column detection (expanded list)
+        text_columns = [
+            'text', 'feedback', 'comment', 'review', 'message', 'description',
+            'feedback_review', 'customer_feedback', 'comments', 'reviews',
+            'feedback_text', 'customer_comment', 'opinion', 'remarks',
+            'notes', 'detail', 'details', 'content', 'body', 'input',
+            'customer_review', 'passenger_feedback', 'response', 'note'
+        ]
         found_text_col = None
         
+        # Step 1: Check for standard column names
         for col in text_columns:
             if col in df.columns:
                 found_text_col = col
                 break
         
-        # If no standard column found, use first column with text data
+        # Step 2: Check for columns containing these keywords
         if found_text_col is None:
             for col in df.columns:
-                if df[col].dtype == 'object' and df[col].str.len().mean() > 20:
+                col_lower = col.lower()
+                if any(keyword in col_lower for keyword in ['text', 'feedback', 'comment', 'review', 'message']):
                     found_text_col = col
                     break
         
+        # Step 3: Find ANY column with substantial text content (average length > 15 chars)
+        if found_text_col is None:
+            for col in df.columns:
+                try:
+                    if df[col].dtype == 'object':
+                        # Calculate average text length (excluding NaN)
+                        valid_texts = df[col].dropna().astype(str)
+                        if len(valid_texts) > 0:
+                            avg_length = valid_texts.str.len().mean()
+                            if avg_length > 15:  # More flexible threshold
+                                found_text_col = col
+                                break
+                except:
+                    continue
+        
+        # Step 4: Last resort - use first object/string column
+        if found_text_col is None:
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    found_text_col = col
+                    break
+        
+        # Only fail if truly no text column exists
         if found_text_col is None:
             raise HTTPException(
                 status_code=400,
-                detail="Could not find feedback text column. Please include a column named 'text' or 'feedback'."
+                detail=f"Could not find any text column in your file. Available columns: {', '.join(df.columns)}. Please ensure your file has at least one column with text data."
             )
         
         # Detect other expected columns

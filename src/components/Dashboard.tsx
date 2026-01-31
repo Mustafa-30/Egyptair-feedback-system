@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, Target, Plane, CheckCircle, TrendingDown, Download, BarChart3, ArrowUpRight, ArrowDownRight, Star, Users } from 'lucide-react';
+import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, Target, Plane, CheckCircle, TrendingDown, Download, BarChart3, ArrowUpRight, ArrowDownRight, Star, Users, Settings, X } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar, LineChart, Line, ReferenceLine } from 'recharts';
 import { analyticsApi, getAccessToken, TrendData, TopComplaint, RouteData, CsatData, ResponseTimeData, ComparisonData, NpsData, NpsHistoryData } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -125,7 +125,7 @@ function LanguageProgressBars({ arabic, english }: { arabic: number; english: nu
 }
 
 // Top Complaints Component
-function TopComplaints({ data, onViewAll }: { data: TopComplaint[]; onViewAll?: () => void }) {
+function TopComplaints({ data, onViewAll, onCategoryClick }: { data: TopComplaint[]; onViewAll?: () => void; onCategoryClick?: (category: string) => void }) {
   const colors = ['#EF4444', '#F59E0B', '#3B82F6', '#10B981', '#8B5CF6'];
   return (
     <div className="space-y-3 p-4">
@@ -137,7 +137,12 @@ function TopComplaints({ data, onViewAll }: { data: TopComplaint[]; onViewAll?: 
       ) : (
         <>
           {data.map((item, index) => (
-            <div key={item.category} className="flex items-center gap-3">
+            <div 
+              key={item.category} 
+              className="flex items-center gap-3 cursor-pointer hover:bg-gray-50 rounded-lg p-1 -m-1 transition-colors"
+              onClick={() => onCategoryClick?.(item.category)}
+              title={`Click to view ${item.category} feedbacks`}
+            >
               <div className="w-2 h-8 rounded-full" style={{ backgroundColor: colors[index % colors.length] }} />
               <div className="flex-1">
                 <div className="flex justify-between items-center mb-1">
@@ -322,8 +327,96 @@ function NPSGauge({ data }: { data: NpsData | null }) {
   );
 }
 
-// NPS History Line Chart
-function NPSHistoryChart({ data }: { data: NpsHistoryData | null }) {
+// NPS Settings Modal Component
+function NpsSettingsModal({ 
+  isOpen, 
+  onClose, 
+  target, 
+  industry, 
+  onSave 
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  target: number; 
+  industry: number; 
+  onSave: (target: number, industry: number) => void;
+}) {
+  const [targetValue, setTargetValue] = useState(target);
+  const [industryValue, setIndustryValue] = useState(industry);
+
+  useEffect(() => {
+    setTargetValue(target);
+    setIndustryValue(industry);
+  }, [target, industry, isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900">NPS Score Settings</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Target NPS Score
+            </label>
+            <input
+              type="number"
+              min="-100"
+              max="100"
+              value={targetValue}
+              onChange={(e) => setTargetValue(Number(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Your organization's target NPS score (-100 to 100)</p>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Industry Benchmark
+            </label>
+            <input
+              type="number"
+              min="-100"
+              max="100"
+              value={industryValue}
+              onChange={(e) => setIndustryValue(Number(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Average NPS for your industry (-100 to 100)</p>
+          </div>
+        </div>
+        
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              onSave(targetValue, industryValue);
+              onClose();
+            }}
+            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Save Settings
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// NPS History Line Chart with custom target/industry
+function NPSHistoryChart({ data, customTarget, customIndustry }: { data: NpsHistoryData | null; customTarget?: number; customIndustry?: number }) {
   if (!data || data.history.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-[300px] text-gray-500">
@@ -332,6 +425,9 @@ function NPSHistoryChart({ data }: { data: NpsHistoryData | null }) {
       </div>
     );
   }
+
+  const targetNps = customTarget ?? data.target_nps;
+  const industryBenchmark = customIndustry ?? data.industry_benchmark;
 
   return (
     <ResponsiveContainer width="100%" height={300}>
@@ -350,9 +446,9 @@ function NPSHistoryChart({ data }: { data: NpsHistoryData | null }) {
         />
         <Legend />
         {/* Target line */}
-        <ReferenceLine y={data.target_nps} stroke="#10B981" strokeDasharray="5 5" label={{ value: `Target: ${data.target_nps}`, fill: '#10B981', fontSize: 11 }} />
+        <ReferenceLine y={targetNps} stroke="#10B981" strokeDasharray="5 5" label={{ value: `Target: ${targetNps}`, fill: '#10B981', fontSize: 11 }} />
         {/* Industry benchmark line */}
-        <ReferenceLine y={data.industry_benchmark} stroke="#6B7280" strokeDasharray="3 3" label={{ value: `Industry: ${data.industry_benchmark}`, fill: '#6B7280', fontSize: 11 }} />
+        <ReferenceLine y={industryBenchmark} stroke="#6B7280" strokeDasharray="3 3" label={{ value: `Industry: ${industryBenchmark}`, fill: '#6B7280', fontSize: 11 }} />
         {/* NPS line */}
         <Line
           type="monotone"
@@ -488,6 +584,11 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   
+  // NPS Settings state
+  const [showNpsSettings, setShowNpsSettings] = useState(false);
+  const [npsTargetOverride, setNpsTargetOverride] = useState<number | null>(null);
+  const [npsIndustryOverride, setNpsIndustryOverride] = useState<number | null>(null);
+  
   // Refs for chart export
   const sentimentChartRef = useRef<HTMLDivElement>(null);
   const trendsChartRef = useRef<HTMLDivElement>(null);
@@ -608,6 +709,28 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const handleViewComplaints = () => {
     if (onNavigate) onNavigate('feedback', { sentiment: 'negative' });
   };
+
+  // Handle category click from Top Complaints
+  const handleCategoryClick = (category: string) => {
+    if (onNavigate) onNavigate('feedback', { sentiment: 'negative', category: category });
+  };
+
+  // Handle NPS settings save
+  const handleNpsSettingsSave = (target: number, industry: number) => {
+    setNpsTargetOverride(target);
+    setNpsIndustryOverride(industry);
+    // Save to localStorage for persistence
+    localStorage.setItem('nps_target', String(target));
+    localStorage.setItem('nps_industry', String(industry));
+  };
+
+  // Load NPS settings from localStorage on mount
+  useEffect(() => {
+    const savedTarget = localStorage.getItem('nps_target');
+    const savedIndustry = localStorage.getItem('nps_industry');
+    if (savedTarget) setNpsTargetOverride(Number(savedTarget));
+    if (savedIndustry) setNpsIndustryOverride(Number(savedIndustry));
+  }, []);
 
   // Export chart as image
   const exportChartAsImage = async (chartRef: React.RefObject<HTMLDivElement>, filename: string) => {
@@ -1063,8 +1186,19 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                   <h3 className="text-lg font-semibold text-[#1F2937]">NPS Score Tracker</h3>
                   <p className="text-sm text-[#6B7280]">Net Promoter Score trend over months</p>
                 </div>
+                <button
+                  onClick={() => setShowNpsSettings(true)}
+                  className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                  title="Edit Target & Industry Values"
+                >
+                  <Settings className="h-5 w-5" />
+                </button>
               </div>
-              <NPSHistoryChart data={npsHistory} />
+              <NPSHistoryChart 
+                data={npsHistory} 
+                customTarget={npsTargetOverride ?? undefined}
+                customIndustry={npsIndustryOverride ?? undefined}
+              />
             </div>
           </div>
 
@@ -1123,13 +1257,22 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 </div>
                 <p className="text-sm text-[#6B7280] mt-1">Most common issues from negative feedback</p>
               </div>
-              <TopComplaints data={topComplaints} onViewAll={handleViewComplaints} />
+              <TopComplaints data={topComplaints} onViewAll={handleViewComplaints} onCategoryClick={handleCategoryClick} />
             </div>
           </div>
 
 
         </>
       )}
+
+      {/* NPS Settings Modal */}
+      <NpsSettingsModal
+        isOpen={showNpsSettings}
+        onClose={() => setShowNpsSettings(false)}
+        onSave={handleNpsSettingsSave}
+        currentTarget={npsTargetOverride ?? 50}
+        currentIndustry={npsIndustryOverride ?? 32}
+      />
     </div>
   );
 }

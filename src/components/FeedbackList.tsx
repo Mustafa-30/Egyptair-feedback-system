@@ -29,6 +29,7 @@ function useDebounce<T>(value: T, delay: number): T {
 function mapApiFeedback(apiFeedback: ApiFeedback): Feedback {
   return {
     id: String(apiFeedback.id),
+    originalId: apiFeedback.original_id || undefined,
     text: apiFeedback.text,
     language: apiFeedback.language,
     sentiment: apiFeedback.sentiment || 'neutral',
@@ -45,6 +46,7 @@ function mapApiFeedback(apiFeedback: ApiFeedback): Feedback {
 export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackListProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSentiment, setSelectedSentiment] = useState(initialFilters.sentiment || 'all');
+  const [selectedCategory, setSelectedCategory] = useState(initialFilters.category || 'all');
   const [selectedLanguage, setSelectedLanguage] = useState('all');
   const [dateRange, setDateRange] = useState({ from: '', to: '' });
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
@@ -76,7 +78,11 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
       setSelectedSentiment(initialFilters.sentiment);
       setCurrentPage(1); // Reset to first page when filter changes
     }
-  }, [initialFilters.sentiment]);
+    if (initialFilters.category) {
+      setSelectedCategory(initialFilters.category);
+      setCurrentPage(1);
+    }
+  }, [initialFilters.sentiment, initialFilters.category]);
 
   // Fetch feedback from API
   const fetchFeedback = useCallback(async () => {
@@ -100,6 +106,7 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
       };
 
       if (selectedSentiment !== 'all') params.sentiment = selectedSentiment;
+      if (selectedCategory !== 'all') params.category = selectedCategory;
       if (selectedLanguage !== 'all') params.language = selectedLanguage;
       if (debouncedSearchQuery.trim()) params.search = debouncedSearchQuery.trim();
       if (dateRange.from) params.date_from = dateRange.from;
@@ -116,7 +123,7 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
     } finally {
       setLoading(false);
     }
-  }, [currentPage, rowsPerPage, selectedSentiment, selectedLanguage, debouncedSearchQuery, dateRange]);
+  }, [currentPage, rowsPerPage, selectedSentiment, selectedCategory, selectedLanguage, debouncedSearchQuery, dateRange]);
 
   useEffect(() => {
     fetchFeedback();
@@ -125,7 +132,7 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
   // Reset to page 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedSentiment, selectedLanguage, debouncedSearchQuery, dateRange]);
+  }, [selectedSentiment, selectedCategory, selectedLanguage, debouncedSearchQuery, dateRange]);
 
   // Delete single feedback
   const handleDeleteFeedback = async (feedbackId: string) => {
@@ -223,6 +230,7 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
         page_size: 10000,
       };
       if (selectedSentiment !== 'all') params.sentiment = selectedSentiment;
+      if (selectedCategory !== 'all') params.category = selectedCategory;
       if (selectedLanguage !== 'all') params.language = selectedLanguage;
       if (debouncedSearchQuery.trim()) params.search = debouncedSearchQuery.trim();
       if (dateRange.from) params.date_from = dateRange.from;
@@ -279,6 +287,7 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
 
   const activeFilters = [];
   if (selectedSentiment !== 'all') activeFilters.push({ label: `Sentiment: ${selectedSentiment}`, key: 'sentiment' });
+  if (selectedCategory !== 'all') activeFilters.push({ label: `Category: ${selectedCategory}`, key: 'category' });
   if (selectedLanguage !== 'all') activeFilters.push({ label: `Language: ${selectedLanguage}`, key: 'language' });
   if (dateRange.from) activeFilters.push({ label: `From: ${dateRange.from}`, key: 'dateFrom' });
   if (dateRange.to) activeFilters.push({ label: `To: ${dateRange.to}`, key: 'dateTo' });
@@ -307,6 +316,9 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
       case 'sentiment':
         setSelectedSentiment('all');
         break;
+      case 'category':
+        setSelectedCategory('all');
+        break;
       case 'language':
         setSelectedLanguage('all');
         break;
@@ -322,6 +334,7 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
   const clearAllFilters = () => {
     setSearchQuery('');
     setSelectedSentiment('all');
+    setSelectedCategory('all');
     setSelectedLanguage('all');
     setDateRange({ from: '', to: '' });
   };
@@ -407,6 +420,23 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
               <option value="AR">Arabic</option>
               <option value="EN">English</option>
               <option value="Mixed">Mixed</option>
+            </select>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="h-10 px-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Categories</option>
+              <option value="Delay/Cancellation">Delay/Cancellation</option>
+              <option value="Lost Baggage">Lost Baggage</option>
+              <option value="Poor Service">Poor Service</option>
+              <option value="Seat Issues">Seat Issues</option>
+              <option value="Food Quality">Food Quality</option>
+              <option value="Booking Problems">Booking Problems</option>
+              <option value="Refund Issues">Refund Issues</option>
+              <option value="Check-in Problems">Check-in Problems</option>
+              <option value="Communication">Communication</option>
+              <option value="Cleanliness">Cleanliness</option>
             </select>
           </div>
 
@@ -565,7 +595,9 @@ export function FeedbackList({ onViewFeedback, initialFilters = {} }: FeedbackLi
                           className="w-4 h-4 text-[#003366] border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                         />
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-[#1F2937]">{feedback.id}</td>
+                      <td className="px-6 py-4 whitespace-nowrap text-[#1F2937]">
+                        {feedback.originalId || feedback.flightNumber || feedback.id}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-[#1F2937]">
                         {new Date(feedback.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </td>

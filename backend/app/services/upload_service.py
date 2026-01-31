@@ -259,6 +259,7 @@ class UploadService:
         text_column = text_column.lower().strip()
         
         # Find columns using priority order
+        id_col = self._find_column(df, ['id', 'feedback_id', 'ID', 'Id', 'record_id', 'ref', 'reference'])
         name_col = self._find_column(df, ['customer_name', 'name', 'customer', 'full_name'])
         flight_col = self._find_column(df, ['flight_number', 'flight', 'flight_no', 'flight_id'])
         date_col = self._find_column(df, ['flight_date', 'date', 'travel_date', 'flight_dt', 'feedback_date'])
@@ -301,8 +302,16 @@ class UploadService:
                 elif lang_value in ['en', 'english']:
                     specified_language = 'EN'
             
+            # Extract original ID from file
+            original_id = None
+            if id_col and pd.notna(row.get(id_col)):
+                original_id = str(row[id_col]).strip()
+                if original_id == 'nan':
+                    original_id = None
+            
             feedback_data = {
                 "text": text,
+                "original_id": original_id,
                 "customer_name": customer_name,
                 "customer_email": None,  # Omitted per user preference
                 "flight_number": flight_number,

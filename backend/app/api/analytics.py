@@ -32,6 +32,8 @@ async def get_dashboard_stats(
         try:
             start_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
             end_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            # Make end_date inclusive (end of day)
+            end_date = end_date.replace(hour=23, minute=59, second=59)
         except:
             end_date = datetime.utcnow()
             start_date = end_date - timedelta(days=days)
@@ -39,10 +41,11 @@ async def get_dashboard_stats(
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days)
     
-    # Base query with date filter
-    query = db.query(Feedback).filter(Feedback.created_at >= start_date)
+    # Base query with date filter - use feedback_date instead of created_at
+    # feedback_date is the actual date from the uploaded file
+    query = db.query(Feedback).filter(Feedback.feedback_date >= start_date)
     if date_to:
-        query = query.filter(Feedback.created_at <= end_date)
+        query = query.filter(Feedback.feedback_date <= end_date)
     
     # Apply sentiment filter if provided
     if sentiment and sentiment != 'all':
@@ -54,17 +57,17 @@ async def get_dashboard_stats(
     # Feedback in date range
     feedback_in_range = query.count()
     
-    # Today's feedback
+    # Today's feedback - use feedback_date
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     today_count = db.query(func.count(Feedback.id)).filter(
-        Feedback.created_at >= today_start
+        Feedback.feedback_date >= today_start
     ).scalar() or 0
     
-    # Previous period for comparison
+    # Previous period for comparison - use feedback_date
     period_length = (end_date - start_date).days or days
     prev_start = start_date - timedelta(days=period_length)
     prev_count = db.query(func.count(Feedback.id)).filter(
-        and_(Feedback.created_at >= prev_start, Feedback.created_at < start_date)
+        and_(Feedback.feedback_date >= prev_start, Feedback.feedback_date < start_date)
     ).scalar() or 0
     
     # Calculate change percentage
@@ -74,10 +77,10 @@ async def get_dashboard_stats(
     else:
         change_str = "+100%" if feedback_in_range > 0 else "0%"
     
-    # Sentiment counts (within date range)
-    sentiment_query = db.query(Feedback).filter(Feedback.created_at >= start_date)
+    # Sentiment counts (within date range) - use feedback_date
+    sentiment_query = db.query(Feedback).filter(Feedback.feedback_date >= start_date)
     if date_to:
-        sentiment_query = sentiment_query.filter(Feedback.created_at <= end_date)
+        sentiment_query = sentiment_query.filter(Feedback.feedback_date <= end_date)
     
     sentiment_counts = sentiment_query.with_entities(
         Feedback.sentiment,
@@ -91,17 +94,26 @@ async def get_dashboard_stats(
     
     total_with_sentiment = positive + negative + neutral
     
-    # Pending feedback count
+    # Pending feedback count - ONLY negative feedback that is pending
     pending_count = db.query(func.count(Feedback.id)).filter(
-        Feedback.status == "pending"
+        Feedback.status == "pending",
+        Feedback.sentiment == "negative"
     ).scalar() or 0
     
-    # Resolved count for resolution rate
-    resolved_count = db.query(func.count(Feedback.id)).filter(
-        Feedback.status == "resolved"
+    # Resolved count for resolution rate - based on negative feedback only
+    # Total negative feedback that needs review
+    total_negative = db.query(func.count(Feedback.id)).filter(
+        Feedback.sentiment == "negative"
     ).scalar() or 0
     
-    resolution_rate = round((resolved_count / total_feedback * 100) if total_feedback > 0 else 0, 1)
+    # Resolved negative feedback
+    resolved_negative = db.query(func.count(Feedback.id)).filter(
+        Feedback.status == "resolved",
+        Feedback.sentiment == "negative"
+    ).scalar() or 0
+    
+    # Resolution rate = resolved negative / total negative
+    resolution_rate = round((resolved_negative / total_negative * 100) if total_negative > 0 else 0, 1)
     
     # Average confidence
     avg_confidence = db.query(func.avg(Feedback.sentiment_confidence)).scalar() or 0

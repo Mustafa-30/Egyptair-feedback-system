@@ -419,6 +419,7 @@ export interface UpdateUserRequest {
 
 export interface Feedback {
   id: number;
+  original_id?: string;  // Original ID from uploaded file (can be text, number, or letters)
   customer_name?: string;
   customer_email?: string;
   flight_number?: string;

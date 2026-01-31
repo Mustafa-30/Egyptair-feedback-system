@@ -86,6 +86,7 @@ class FeedbackAnalyzeRequest(BaseModel):
 class FeedbackResponse(BaseModel):
     """Schema for feedback response"""
     id: int
+    original_id: Optional[str] = None
     customer_name: Optional[str] = None
     customer_email: Optional[str] = None
     flight_number: Optional[str] = None

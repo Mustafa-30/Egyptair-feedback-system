@@ -60,6 +60,9 @@ class Feedback(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     
+    # Original ID from uploaded file (can be text, number, or letters)
+    original_id = Column(String(100), nullable=True, index=True)
+    
     # Customer Information
     customer_name = Column(String(100), nullable=True)
     customer_email = Column(String(100), nullable=True)

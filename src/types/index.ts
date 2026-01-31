@@ -34,6 +34,7 @@ export type FeedbackStatus = 'pending' | 'in_progress' | 'reviewed' | 'resolved'
 
 export interface Feedback {
   id: string;
+  originalId?: string;  // Original ID from uploaded file
   date: string;
   text: string;
   language: Language;

@@ -420,6 +420,30 @@ class SentimentAnalyzer:
         negative_score = 0
         neutral_score = 0
         
+        # =================================================================
+        # CHECK FOR MIXED SENTIMENT PATTERNS FIRST (English)
+        # "X but Y" patterns where second part determines overall sentiment
+        # =================================================================
+        if language in ["EN", "Mixed"]:
+            # Strong negative words that override positive when after "but/however"
+            strong_negatives = ['terrible', 'horrible', 'awful', 'worst', 'disgusting', 
+                               'unacceptable', 'rude', 'delayed', 'late', 'lost', 'cancelled',
+                               'canceled', 'disappointing', 'disappointed', 'poor', 'bad']
+            
+            # Check for "positive but STRONG_NEGATIVE" pattern
+            but_match = re.search(r'\b(but|however|although|though|yet)\b', text_lower)
+            if but_match:
+                text_after_but = text_lower[but_match.end():]
+                # Check if strong negative words appear after "but"
+                for neg_word in strong_negatives:
+                    if neg_word in text_after_but:
+                        # This is a mixed sentiment that leans negative
+                        return "negative", 0.75
+            
+            # Check for "mediocre" - always negative
+            if 'mediocre' in text_lower:
+                return "negative", 0.75
+        
         # Score Arabic words (check if keyword appears anywhere in text)
         if language in ["AR", "Mixed"]:
             for word in self.positive_words_ar:
@@ -696,6 +720,84 @@ class SentimentAnalyzer:
             text_lower = text.lower()
             
             # ============================================================
+            # STRONG NEGATIVE WORDS - Check FIRST (before neutral detection)
+            # These override neutral patterns
+            # ============================================================
+            strong_negative_words = [
+                'mediocre', 'terrible', 'horrible', 'awful', 'worst', 
+                'disgusting', 'unacceptable', 'nightmare', 'disaster',
+                'disappointed', 'disappointing', 'disappointment',
+                'dismissive', 'unhelpful', 'rude', 'unprofessional',
+                'stale', 'cold and', 'unappetizing', 'inedible',
+                'extremely disappointed', 'deeply disappointed',
+                'very disappointed', 'totally disappointed',
+                'frustrating', 'frustrated', 'frustration',
+                'disinterested', 'ignored', 'no explanation',
+                'no compensation', 'two hours late', 'hours late',
+                'baggage arrived late', 'baggage was late', 'luggage late',
+                'minimal communication', 'no communication'
+            ]
+            # Check for strong negative phrases/words
+            has_strong_negative = any(word in text_lower for word in strong_negative_words)
+            
+            # Also check for Arabic strong negatives
+            arabic_strong_negatives = ['مخيبة', 'سيئة', 'فظيع', 'مقرف', 'بارد', 'غير شهي']
+            if language == "AR":
+                has_strong_negative = has_strong_negative or any(word in text for word in arabic_strong_negatives)
+            
+            if has_strong_negative:
+                return 'negative', 0.85
+            
+            # ============================================================
+            # EARLY NEUTRAL DETECTION - Only for truly neutral text
+            # Must NOT contain any negative indicators
+            # ============================================================
+            
+            # First check if there are ANY negative words (weak check)
+            weak_negative_indicators = [
+                'problem', 'issue', 'delay', 'late', 'slow', 'poor',
+                'bad', 'uncomfortable', 'cramped', 'cold', 'dirty',
+                'rude', 'ignored', 'waited', 'never'
+            ]
+            has_any_negative = any(word in text_lower for word in weak_negative_indicators)
+            
+            # 1. Explicit rating mentions that are neutral (3/5, 3 stars, etc.)
+            neutral_rating_patterns = [
+                r'\b3\s*/\s*5\b',                    # 3/5
+                r'\b3\s+out\s+of\s+5\b',             # 3 out of 5
+                r'\b(three|3)\s+stars?\b',           # 3 stars
+                r'\brating:\s*(3|neutral)\b',        # Rating: 3 or Rating: Neutral
+                r'\b(5|6|7)\s*/\s*10\b',             # 5/10, 6/10, 7/10
+                r'\boverall\s+experience:\s*neutral\b',  # Overall Experience: Neutral
+            ]
+            
+            # 2. Explicit neutral/mixed language - ONLY if no negative indicators
+            explicit_neutral_patterns = [
+                r'\bmixed\s+experience\b',           # mixed experience
+                r'\bfairly\s+standard\b',            # fairly standard
+            ]
+            
+            # Only match "satisfactory" if it's truly positive context (no negatives)
+            is_explicit_neutral = False
+            
+            # Check for explicit neutral ratings first (these are strong signals)
+            if any(re.search(pattern, text_lower) for pattern in neutral_rating_patterns):
+                # Check it's not a low rating like 2/5
+                if not re.search(r'\b[12]\s*/\s*5\b', text_lower) and not re.search(r'\b[12]\s+stars?\b', text_lower):
+                    is_explicit_neutral = True
+            
+            # Check for neutral language only if no negative words present
+            if not has_any_negative:
+                if any(re.search(pattern, text_lower) for pattern in explicit_neutral_patterns):
+                    is_explicit_neutral = True
+                # "satisfactory" only counts as neutral if no negative indicators
+                if 'satisfactory' in text_lower:
+                    is_explicit_neutral = True
+            
+            if is_explicit_neutral:
+                return 'neutral', 0.75
+            
+            # ============================================================
             # ARABIC RULE-BASED VERIFICATION
             # Arabic ML model (CAMeL) can be inconsistent, so we verify with keywords
             # ============================================================
@@ -779,7 +881,9 @@ class SentimentAnalyzer:
                 neutral_phrases = [
                     'nothing bad but nothing', 'nothing too good', 'nothing special',
                     'average experience', 'alright nothing bad', 'not bad not great',
-                    'could be better could be worse', 'mixed feelings', 'pros and cons'
+                    'could be better could be worse', 'mixed feelings', 'pros and cons',
+                    'mixed experience', 'fairly standard', 'satisfactory', 'overall satisfactory',
+                    'had its moments', 'room for improvement', 'hit or miss'
                 ]
                 has_neutral_phrase = any(phrase in text_lower for phrase in neutral_phrases)
                 
@@ -867,7 +971,8 @@ class SentimentAnalyzer:
                     r'\b(avoid|stay\s*away|don\'t\s*use|waste\s*of)\b',
                     r'\b(worst|terrible|horrible|awful|disgusting)\b(?!.{0,30}\b(but|however|although)\b)',  # Not followed by "but"
                     r'\b(never\s+again|total\s+disaster|complete\s+failure)\b',
-                    r'\b(rip\s*off|scam|fraud|nightmare)\b'
+                    r'\b(rip\s*off|scam|fraud|nightmare)\b',
+                    r'\bmediocre\b'  # "mediocre" is always negative
                 ]
                 
                 is_strong_negative = any(re.search(pattern, text_lower) for pattern in strong_negative_patterns)

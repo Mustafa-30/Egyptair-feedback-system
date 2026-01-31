@@ -35,6 +35,7 @@ async def get_feedbacks(
     priority: Optional[str] = None,
     language: Optional[str] = None,
     feedback_type: Optional[str] = None,
+    category: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -69,6 +70,27 @@ async def get_feedbacks(
     
     if feedback_type:
         query = query.filter(Feedback.feedback_type == feedback_type)
+    
+    # Category filter - search for keywords in feedback text based on category
+    # These match the categories returned by /analytics/top-complaints
+    if category:
+        category_keywords = {
+            "Delay/Cancellation": ["delay", "delayed", "cancel", "cancelled", "late", "wait", "hours", "تأخير", "إلغاء", "تأخر"],
+            "Lost Baggage": ["luggage", "baggage", "bag", "lost", "missing", "suitcase", "حقيبة", "أمتعة", "ضائعة"],
+            "Poor Service": ["rude", "unhelpful", "staff", "service", "attitude", "خدمة", "سيء", "موظف"],
+            "Seat Issues": ["seat", "uncomfortable", "space", "legroom", "cramped", "مقعد", "ضيق"],
+            "Food Quality": ["food", "meal", "cold", "taste", "quality", "طعام", "وجبة", "بارد"],
+            "Booking Problems": ["booking", "reservation", "website", "app", "حجز", "موقع", "تطبيق"],
+            "Refund Issues": ["refund", "money", "charge", "payment", "استرداد", "مال", "دفع"],
+            "Check-in Problems": ["check-in", "checkin", "counter", "queue", "line", "تسجيل", "طابور"],
+            "Communication": ["communication", "inform", "notification", "update", "تواصل", "إبلاغ"],
+            "Cleanliness": ["dirty", "clean", "hygiene", "toilet", "نظافة", "قذر", "حمام"]
+        }
+        keywords = category_keywords.get(category, [])
+        if keywords:
+            # Create OR conditions for all keywords in the category
+            keyword_filters = [Feedback.text.ilike(f"%{kw}%") for kw in keywords]
+            query = query.filter(or_(*keyword_filters))
     
     if date_from:
         try:

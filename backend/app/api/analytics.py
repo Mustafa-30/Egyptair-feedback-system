@@ -17,17 +17,21 @@ router = APIRouter()
 
 @router.get("/dashboard")
 async def get_dashboard_stats(
-    days: int = Query(30, ge=1, le=365),
+    days: Optional[int] = Query(None, ge=1, le=365),
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     sentiment: Optional[str] = None,
+    show_all: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get dashboard statistics with optional filters
+    Get dashboard statistics with optional filters.
+    If no date filters are specified and show_all=true, returns all data.
+    Otherwise defaults to last 30 days.
     """
     # Calculate date range
+    use_date_filter = True
     if date_from and date_to:
         try:
             start_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
@@ -36,16 +40,23 @@ async def get_dashboard_stats(
             end_date = end_date.replace(hour=23, minute=59, second=59)
         except:
             end_date = datetime.utcnow()
-            start_date = end_date - timedelta(days=days)
+            start_date = end_date - timedelta(days=days or 30)
+    elif show_all or (days is None and not date_from and not date_to):
+        # Show all data when show_all=true or no date params provided
+        use_date_filter = False
+        end_date = datetime.utcnow()
+        start_date = datetime(2000, 1, 1)  # Very old date to include all
     else:
         end_date = datetime.utcnow()
-        start_date = end_date - timedelta(days=days)
+        start_date = end_date - timedelta(days=days or 30)
     
-    # Base query with date filter - use feedback_date instead of created_at
+    # Base query with optional date filter - use feedback_date instead of created_at
     # feedback_date is the actual date from the uploaded file
-    query = db.query(Feedback).filter(Feedback.feedback_date >= start_date)
-    if date_to:
-        query = query.filter(Feedback.feedback_date <= end_date)
+    query = db.query(Feedback)
+    if use_date_filter:
+        query = query.filter(Feedback.feedback_date >= start_date)
+        if date_to:
+            query = query.filter(Feedback.feedback_date <= end_date)
     
     # Apply sentiment filter if provided
     if sentiment and sentiment != 'all':
@@ -78,6 +89,8 @@ async def get_dashboard_stats(
         change_str = "+100%" if feedback_in_range > 0 else "0%"
     
     # Sentiment counts (within date range) - use feedback_date
+    # IMPORTANT: Don't apply sentiment filter here - we always want all sentiment counts
+    # for proper percentage calculation. The sentiment filter only affects the main query.
     sentiment_query = db.query(Feedback).filter(Feedback.feedback_date >= start_date)
     if date_to:
         sentiment_query = sentiment_query.filter(Feedback.feedback_date <= end_date)
@@ -433,17 +446,37 @@ async def get_analytics_summary(
 @router.get("/top-complaints")
 async def get_top_complaints(
     limit: int = Query(5, ge=1, le=20),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get top complaint categories from negative feedback
-    Extracts common keywords/themes from complaint texts
+    Get top complaint categories from negative feedback.
+    Supports date filtering with feedback_date.
     """
-    # Get negative feedback texts
-    negative_feedback = db.query(Feedback.text, Feedback.feedback_type).filter(
+    # Build base query for negative feedback
+    query = db.query(Feedback.text, Feedback.feedback_type).filter(
         Feedback.sentiment == "negative"
-    ).limit(500).all()
+    )
+    
+    # Apply date filters if provided
+    if date_from:
+        try:
+            start_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            query = query.filter(Feedback.feedback_date >= start_date)
+        except:
+            pass
+    
+    if date_to:
+        try:
+            end_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            end_date = end_date.replace(hour=23, minute=59, second=59)
+            query = query.filter(Feedback.feedback_date <= end_date)
+        except:
+            pass
+    
+    negative_feedback = query.limit(500).all()
     
     # Common complaint categories and their keywords
     complaint_categories = {
@@ -535,23 +568,54 @@ async def get_feedback_by_route(
 @router.get("/csat-score")
 async def get_csat_score(
     days: int = Query(30, ge=1, le=365),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    show_all: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Calculate Customer Satisfaction (CSAT) score based on positive feedback ratio
+    Calculate Customer Satisfaction (CSAT) score based on positive feedback ratio.
+    Uses feedback_date for accurate filtering.
     CSAT = (Positive Feedback / Total Feedback) * 100
     """
-    end_date = datetime.utcnow()
-    start_date = end_date - timedelta(days=days)
+    # Calculate date range
+    use_date_filter = True
+    if date_from and date_to:
+        try:
+            start_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            end_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            end_date = end_date.replace(hour=23, minute=59, second=59)
+        except:
+            end_date = datetime.utcnow()
+            start_date = end_date - timedelta(days=days)
+    elif show_all:
+        use_date_filter = False
+        # Get date range from actual data
+        max_date = db.query(func.max(Feedback.feedback_date)).scalar()
+        min_date = db.query(func.min(Feedback.feedback_date)).scalar()
+        if max_date and min_date:
+            end_date = max_date
+            start_date = min_date
+        else:
+            end_date = datetime.utcnow()
+            start_date = datetime(2000, 1, 1)
+    else:
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days)
     
-    # Get sentiment counts for the period
-    results = db.query(
+    # Get sentiment counts for the period using feedback_date
+    query = db.query(
         Feedback.sentiment,
         func.count(Feedback.id).label('count')
-    ).filter(
-        Feedback.created_at >= start_date
-    ).group_by(Feedback.sentiment).all()
+    )
+    
+    if use_date_filter or (date_from and date_to):
+        query = query.filter(Feedback.feedback_date >= start_date)
+        if date_to or not show_all:
+            query = query.filter(Feedback.feedback_date <= end_date)
+    
+    results = query.group_by(Feedback.sentiment).all()
     
     sentiment_dict = {r.sentiment: r.count for r in results if r.sentiment}
     positive = sentiment_dict.get("positive", 0)
@@ -563,12 +627,13 @@ async def get_csat_score(
     csat_score = round((positive / total * 100) if total > 0 else 0, 1)
     
     # Previous period for comparison
-    prev_start = start_date - timedelta(days=days)
+    period_length = (end_date - start_date).days if use_date_filter else days
+    prev_start = start_date - timedelta(days=period_length)
     prev_results = db.query(
         Feedback.sentiment,
         func.count(Feedback.id).label('count')
     ).filter(
-        and_(Feedback.created_at >= prev_start, Feedback.created_at < start_date)
+        and_(Feedback.feedback_date >= prev_start, Feedback.feedback_date < start_date)
     ).group_by(Feedback.sentiment).all()
     
     prev_dict = {r.sentiment: r.count for r in prev_results if r.sentiment}
@@ -585,7 +650,7 @@ async def get_csat_score(
         "change": csat_change,
         "positive_count": positive,
         "total_count": total,
-        "period_days": days,
+        "period_days": period_length,
         "grade": "Excellent" if csat_score >= 80 else "Good" if csat_score >= 60 else "Fair" if csat_score >= 40 else "Poor"
     }
 
@@ -755,11 +820,15 @@ async def get_period_comparison(
 @router.get("/nps-score")
 async def get_nps_score(
     days: int = Query(30, ge=1, le=365),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    show_all: bool = Query(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     Calculate Net Promoter Score (NPS) based on sentiment.
+    Uses feedback_date for accurate filtering.
     
     NPS Mapping for sentiment-based feedback:
     - Positive sentiment = Promoters (score 9-10)
@@ -768,16 +837,42 @@ async def get_nps_score(
     
     NPS = % Promoters - % Detractors
     """
-    end_date = datetime.utcnow()
-    start_date = end_date - timedelta(days=days)
+    # Calculate date range
+    use_date_filter = True
+    if date_from and date_to:
+        try:
+            start_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            end_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            end_date = end_date.replace(hour=23, minute=59, second=59)
+        except:
+            end_date = datetime.utcnow()
+            start_date = end_date - timedelta(days=days)
+    elif show_all:
+        use_date_filter = False
+        max_date = db.query(func.max(Feedback.feedback_date)).scalar()
+        min_date = db.query(func.min(Feedback.feedback_date)).scalar()
+        if max_date and min_date:
+            end_date = max_date
+            start_date = min_date
+        else:
+            end_date = datetime.utcnow()
+            start_date = datetime(2000, 1, 1)
+    else:
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days)
     
-    # Get sentiment counts for the period
-    results = db.query(
+    # Get sentiment counts for the period using feedback_date
+    query = db.query(
         Feedback.sentiment,
         func.count(Feedback.id).label('count')
-    ).filter(
-        Feedback.created_at >= start_date
-    ).group_by(Feedback.sentiment).all()
+    )
+    
+    if use_date_filter or (date_from and date_to):
+        query = query.filter(Feedback.feedback_date >= start_date)
+        if date_to or not show_all:
+            query = query.filter(Feedback.feedback_date <= end_date)
+    
+    results = query.group_by(Feedback.sentiment).all()
     
     sentiment_dict = {r.sentiment: r.count for r in results if r.sentiment}
     promoters = sentiment_dict.get("positive", 0)  # Positive = Promoters
@@ -796,12 +891,13 @@ async def get_nps_score(
         nps_score = 0
     
     # Previous period for comparison
-    prev_start = start_date - timedelta(days=days)
+    period_length = (end_date - start_date).days if use_date_filter else days
+    prev_start = start_date - timedelta(days=period_length)
     prev_results = db.query(
         Feedback.sentiment,
         func.count(Feedback.id).label('count')
     ).filter(
-        and_(Feedback.created_at >= prev_start, Feedback.created_at < start_date)
+        and_(Feedback.feedback_date >= prev_start, Feedback.feedback_date < start_date)
     ).group_by(Feedback.sentiment).all()
     
     prev_dict = {r.sentiment: r.count for r in prev_results if r.sentiment}
@@ -849,77 +945,255 @@ async def get_nps_score(
 
 @router.get("/nps-history")
 async def get_nps_history(
-    months: int = Query(6, ge=1, le=12),
+    months: int = Query(6, ge=1, le=24),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
     Get NPS score history by month for trend visualization.
-    Returns monthly NPS scores for the specified number of months.
-    """
-    end_date = datetime.utcnow()
-    history = []
+    Returns monthly NPS scores calculated independently for each calendar month.
+    Always returns a full timeline with all months in the date range.
     
-    for i in range(months - 1, -1, -1):
-        # Calculate month boundaries
-        month_end = end_date - timedelta(days=i * 30)
-        month_start = month_end - timedelta(days=30)
+    NPS Calculation (based on sentiment as proxy for ratings):
+    - Promoters: positive sentiment (equivalent to ratings 9-10)
+    - Detractors: negative sentiment (equivalent to ratings 0-6)
+    - Passives: neutral sentiment (equivalent to ratings 7-8)
+    - NPS = Promoters% - Detractors%
+    """
+    from sqlalchemy import extract
+    from calendar import monthrange
+    from dateutil.relativedelta import relativedelta
+    
+    history = []
+    min_responses_threshold = 5  # Minimum responses needed for valid NPS calculation
+    
+    # Determine the date range for the timeline
+    if date_from and date_to:
+        try:
+            start_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            end_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+        except Exception:
+            # Fall back to data range
+            start_date = None
+            end_date = None
+    else:
+        start_date = None
+        end_date = None
+    
+    # If no date range specified, use actual data range
+    if not start_date or not end_date:
+        max_date = db.query(func.max(Feedback.feedback_date)).scalar()
+        min_date = db.query(func.min(Feedback.feedback_date)).scalar()
         
-        # Get sentiment counts for this month
-        results = db.query(
-            Feedback.sentiment,
-            func.count(Feedback.id).label('count')
-        ).filter(
-            and_(Feedback.created_at >= month_start, Feedback.created_at < month_end)
-        ).group_by(Feedback.sentiment).all()
-        
-        sentiment_dict = {r.sentiment: r.count for r in results if r.sentiment}
-        promoters = sentiment_dict.get("positive", 0)
-        detractors = sentiment_dict.get("negative", 0)
-        total = sum(sentiment_dict.values())
-        
-        if total > 0:
-            nps = round(((promoters / total) * 100) - ((detractors / total) * 100))
+        if max_date and min_date:
+            # Use the last N months from max_date
+            end_date = max_date
+            start_date = max_date - relativedelta(months=months-1)
+            # Align to start of month
+            start_date = start_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         else:
-            nps = 0
-        
-        # Format month label
-        month_label = month_end.strftime("%b %Y")
-        
-        history.append({
-            "month": month_label,
-            "nps": nps,
-            "total_responses": total,
-            "promoters": promoters,
-            "detractors": detractors
+            # No data at all
+            return {
+                "history": [],
+                "target_nps": 50,
+                "industry_benchmark": 35,
+                "summary": {
+                    "avg_nps": None,
+                    "max_nps": None,
+                    "min_nps": None,
+                    "months_above_target": 0,
+                    "total_months": 0,
+                    "months_with_data": 0
+                }
+            }
+    
+    # Generate full list of months in the timeline
+    timeline_months = []
+    current = datetime(start_date.year, start_date.month, 1)
+    end_month = datetime(end_date.year, end_date.month, 1)
+    
+    while current <= end_month:
+        timeline_months.append({
+            'year': current.year,
+            'month': current.month,
+            'key': f'{current.year}-{current.month:02d}',
+            'label': current.strftime("%b %Y")
         })
+        current = current + relativedelta(months=1)
+    
+    # Build query to get actual data grouped by month
+    base_query = db.query(
+        extract('year', Feedback.feedback_date).label('year'),
+        extract('month', Feedback.feedback_date).label('month'),
+        Feedback.sentiment,
+        func.count(Feedback.id).label('count')
+    ).filter(
+        Feedback.feedback_date.isnot(None),
+        Feedback.sentiment.isnot(None),
+        Feedback.feedback_date >= datetime(start_date.year, start_date.month, 1),
+        Feedback.feedback_date <= end_date.replace(hour=23, minute=59, second=59)
+    )
+    
+    # Group by year and month, then by sentiment
+    results = base_query.group_by(
+        extract('year', Feedback.feedback_date),
+        extract('month', Feedback.feedback_date),
+        Feedback.sentiment
+    ).all()
+    
+    # Process results into monthly data dictionary
+    months_data = {}
+    for row in results:
+        if row.year is None or row.month is None:
+            continue
+        year, month = int(row.year), int(row.month)
+        key = f'{year}-{month:02d}'
+        if key not in months_data:
+            months_data[key] = {
+                'positive': 0,
+                'negative': 0,
+                'neutral': 0
+            }
+        if row.sentiment:
+            months_data[key][row.sentiment] = row.count
+    
+    # Build history with all months in timeline (including those with no data)
+    for timeline_month in timeline_months:
+        key = timeline_month['key']
+        month_label = timeline_month['label']
+        
+        if key in months_data:
+            data = months_data[key]
+            promoters = data['positive']
+            detractors = data['negative']
+            passives = data['neutral']
+            total = promoters + detractors + passives
+            
+            if total >= min_responses_threshold:
+                promoters_pct = (promoters / total) * 100
+                detractors_pct = (detractors / total) * 100
+                nps = round(promoters_pct - detractors_pct)
+                has_sufficient_data = True
+            elif total > 0:
+                promoters_pct = (promoters / total) * 100
+                detractors_pct = (detractors / total) * 100
+                nps = round(promoters_pct - detractors_pct)
+                has_sufficient_data = False
+            else:
+                promoters_pct = 0
+                detractors_pct = 0
+                nps = None
+                has_sufficient_data = False
+            
+            history.append({
+                "month": month_label,
+                "nps": nps,
+                "total_responses": total,
+                "promoters": promoters,
+                "detractors": detractors,
+                "passives": passives,
+                "promoters_pct": round(promoters_pct, 1),
+                "detractors_pct": round(detractors_pct, 1),
+                "has_sufficient_data": has_sufficient_data,
+                "has_data": True
+            })
+        else:
+            # No data for this month - include it with null values
+            history.append({
+                "month": month_label,
+                "nps": None,
+                "total_responses": 0,
+                "promoters": 0,
+                "detractors": 0,
+                "passives": 0,
+                "promoters_pct": 0,
+                "detractors_pct": 0,
+                "has_sufficient_data": False,
+                "has_data": False
+            })
+    
+    # Limit to requested number of months (most recent) if needed
+    if len(history) > months:
+        history = history[-months:]
+    
+    # Calculate summary statistics
+    valid_nps_values = [h["nps"] for h in history if h["nps"] is not None and h["has_sufficient_data"]]
     
     return {
         "history": history,
-        "target_nps": 50,  # Target NPS score
-        "industry_benchmark": 35
+        "target_nps": 50,
+        "industry_benchmark": 35,
+        "summary": {
+            "avg_nps": round(sum(valid_nps_values) / len(valid_nps_values)) if valid_nps_values else None,
+            "max_nps": max(valid_nps_values) if valid_nps_values else None,
+            "min_nps": min(valid_nps_values) if valid_nps_values else None,
+            "months_above_target": len([v for v in valid_nps_values if v >= 50]),
+            "total_months": len(history),
+            "months_with_data": len([h for h in history if h["has_data"]])
+        }
     }
 
 
 @router.get("/top-routes")
 async def get_top_routes(
     limit: int = Query(10, ge=1, le=20),
+    sort_by: str = Query("weighted", regex="^(volume|rating|weighted)$"),
+    min_reviews: int = Query(5, ge=1, le=100),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    Get top routes with most feedback, including sentiment breakdown and average rating.
-    Enhanced version of feedback-by-route with more useful metrics.
+    Get routes with feedback, ranked by specified criteria.
+    
+    Ranking Criteria (sort_by parameter):
+    - "volume": Most Reviewed Routes - ranked by total number of reviews
+    - "rating": Highest Rated Routes - ranked by average rating (with minimum review threshold)
+    - "weighted": Best Routes (default) - ranked by Wilson Score (balances rating with sample size)
+    
+    The weighted score uses a Bayesian approach that:
+    - Penalizes routes with few reviews to avoid ranking bias
+    - Routes must meet min_reviews threshold for rating-based rankings
+    - Considers both positive feedback ratio and sample size confidence
+    
+    Parameters:
+    - sort_by: Ranking method ("volume", "rating", or "weighted")
+    - min_reviews: Minimum reviews required for rating-based rankings (default: 5)
+    - limit: Maximum number of routes to return
+    - date_from/date_to: Optional date range filter
     """
-    # Get feedback count by flight number with sentiment breakdown
-    results = db.query(
+    import math
+    
+    # Build base query
+    query = db.query(
         Feedback.flight_number,
         Feedback.sentiment,
         func.count(Feedback.id).label('count')
     ).filter(
         Feedback.flight_number.isnot(None),
         Feedback.flight_number != ""
-    ).group_by(
+    )
+    
+    # Apply date filters if provided
+    if date_from:
+        try:
+            start_date = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            query = query.filter(Feedback.feedback_date >= start_date)
+        except:
+            pass
+    
+    if date_to:
+        try:
+            end_date = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            end_date = end_date.replace(hour=23, minute=59, second=59)
+            query = query.filter(Feedback.feedback_date <= end_date)
+        except:
+            pass
+    
+    results = query.group_by(
         Feedback.flight_number,
         Feedback.sentiment
     ).all()
@@ -940,30 +1214,103 @@ async def get_top_routes(
         if row.sentiment in ["positive", "negative", "neutral"]:
             routes[route][row.sentiment] = row.count
     
-    # Calculate average rating and sentiment score for each route
+    # Calculate metrics for each route
     for route_data in routes.values():
         total = route_data["total"]
+        positive = route_data["positive"]
+        negative = route_data["negative"]
+        
         if total > 0:
             # Calculate sentiment-based rating (1-5 scale)
             # Positive = 5, Neutral = 3, Negative = 1
             weighted_sum = (
-                route_data["positive"] * 5 +
+                positive * 5 +
                 route_data["neutral"] * 3 +
-                route_data["negative"] * 1
+                negative * 1
             )
-            route_data["avg_rating"] = round(weighted_sum / total, 1)
-            route_data["positive_pct"] = round((route_data["positive"] / total) * 100, 1)
-            route_data["negative_pct"] = round((route_data["negative"] / total) * 100, 1)
+            avg_rating = weighted_sum / total
+            route_data["avg_rating"] = round(avg_rating, 2)
+            route_data["positive_pct"] = round((positive / total) * 100, 1)
+            route_data["negative_pct"] = round((negative / total) * 100, 1)
+            
+            # Calculate Wilson Score Lower Bound for ranking
+            # This is a statistically sound way to rank items by positive ratio
+            # while accounting for sample size uncertainty
+            # Formula: Wilson Score Lower Bound at 95% confidence
+            p = positive / total  # Positive proportion
+            n = total  # Sample size
+            z = 1.96  # Z-score for 95% confidence
+            
+            # Wilson score lower bound formula
+            denominator = 1 + (z * z) / n
+            center = p + (z * z) / (2 * n)
+            spread = z * math.sqrt((p * (1 - p) + (z * z) / (4 * n)) / n)
+            wilson_score = (center - spread) / denominator
+            
+            route_data["wilson_score"] = round(wilson_score, 4)
+            
+            # Confidence level based on sample size
+            if total >= 50:
+                route_data["confidence"] = "high"
+            elif total >= min_reviews:
+                route_data["confidence"] = "medium"
+            else:
+                route_data["confidence"] = "low"
+            
+            # Flag if meets minimum review threshold
+            route_data["meets_threshold"] = total >= min_reviews
         else:
             route_data["avg_rating"] = 0
             route_data["positive_pct"] = 0
             route_data["negative_pct"] = 0
+            route_data["wilson_score"] = 0
+            route_data["confidence"] = "none"
+            route_data["meets_threshold"] = False
     
-    # Sort by total feedback count and get top N
-    sorted_routes = sorted(
-        routes.values(),
-        key=lambda x: x["total"],
-        reverse=True
-    )[:limit]
+    # Sort based on criteria
+    if sort_by == "volume":
+        # Most Reviewed Routes - simple count ranking
+        sorted_routes = sorted(
+            routes.values(),
+            key=lambda x: x["total"],
+            reverse=True
+        )
+        ranking_method = "volume"
+        ranking_description = "Ranked by total number of reviews"
+    elif sort_by == "rating":
+        # Highest Rated Routes - filter by min_reviews, then sort by rating
+        qualified_routes = [r for r in routes.values() if r["meets_threshold"]]
+        unqualified_routes = [r for r in routes.values() if not r["meets_threshold"]]
+        
+        # Sort qualified by rating, unqualified by volume
+        sorted_qualified = sorted(qualified_routes, key=lambda x: x["avg_rating"], reverse=True)
+        sorted_unqualified = sorted(unqualified_routes, key=lambda x: x["total"], reverse=True)
+        
+        # Qualified routes first, then unqualified
+        sorted_routes = sorted_qualified + sorted_unqualified
+        ranking_method = "rating"
+        ranking_description = f"Ranked by average rating (minimum {min_reviews} reviews required)"
+    else:  # weighted (default)
+        # Best Routes - Wilson Score ranking (statistically sound)
+        # Routes with enough reviews are ranked by wilson_score
+        # Routes without enough reviews are deprioritized
+        qualified_routes = [r for r in routes.values() if r["meets_threshold"]]
+        unqualified_routes = [r for r in routes.values() if not r["meets_threshold"]]
+        
+        sorted_qualified = sorted(qualified_routes, key=lambda x: x["wilson_score"], reverse=True)
+        sorted_unqualified = sorted(unqualified_routes, key=lambda x: x["total"], reverse=True)
+        
+        sorted_routes = sorted_qualified + sorted_unqualified
+        ranking_method = "weighted"
+        ranking_description = f"Ranked by Wilson Score (balances rating with statistical confidence, minimum {min_reviews} reviews)"
     
-    return sorted_routes
+    # Limit results
+    sorted_routes = sorted_routes[:limit]
+    
+    return {
+        "routes": sorted_routes,
+        "ranking_method": ranking_method,
+        "ranking_description": ranking_description,
+        "min_reviews_threshold": min_reviews,
+        "total_routes_analyzed": len(routes)
+    }

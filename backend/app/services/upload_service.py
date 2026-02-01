@@ -3,7 +3,8 @@ File Upload Service for CSV/Excel processing
 """
 import os
 import io
-from typing import List, Dict, Optional
+import re
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 
 import pandas as pd
@@ -11,6 +12,149 @@ from fastapi import UploadFile, HTTPException
 
 from app.core.config import settings
 from app.services.sentiment_service import sentiment_analyzer
+
+
+def normalize_date(date_value, column_dates: List = None) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Robust date normalization that handles multiple formats.
+    Returns (normalized_date_iso, warning_message)
+    
+    Supported formats:
+    - yyyy-mm-dd (ISO standard)
+    - dd/mm/yyyy (European/International)
+    - mm/dd/yyyy (US format)
+    - dd-mm-yyyy
+    - mm-dd-yyyy
+    - dd.mm.yyyy
+    - yyyy/mm/dd
+    - Natural language dates
+    """
+    if pd.isna(date_value) or date_value is None:
+        return None, None
+    
+    # If already a datetime object
+    if isinstance(date_value, (datetime, pd.Timestamp)):
+        return date_value.isoformat(), None
+    
+    date_str = str(date_value).strip()
+    if not date_str or date_str.lower() in ['nan', 'nat', 'none', '']:
+        return None, None
+    
+    warning = None
+    
+    # Try pandas parsing first (handles many formats automatically)
+    try:
+        # First try without dayfirst to see if it's unambiguous
+        parsed = pd.to_datetime(date_str, infer_datetime_format=True)
+        return parsed.isoformat(), None
+    except:
+        pass
+    
+    # Define format patterns to try
+    formats_to_try = [
+        # ISO formats (most reliable)
+        ('%Y-%m-%d', None),
+        ('%Y-%m-%d %H:%M:%S', None),
+        ('%Y-%m-%dT%H:%M:%S', None),
+        ('%Y-%m-%dT%H:%M:%S.%f', None),
+        ('%Y/%m/%d', None),
+        
+        # European/International formats (day first)
+        ('%d/%m/%Y', True),
+        ('%d-%m-%Y', True),
+        ('%d.%m.%Y', True),
+        ('%d/%m/%Y %H:%M:%S', True),
+        ('%d-%m-%Y %H:%M:%S', True),
+        
+        # US formats (month first)
+        ('%m/%d/%Y', False),
+        ('%m-%d-%Y', False),
+        ('%m/%d/%Y %H:%M:%S', False),
+        ('%m-%d-%Y %H:%M:%S', False),
+        
+        # Other common formats
+        ('%B %d, %Y', None),  # January 15, 2024
+        ('%b %d, %Y', None),  # Jan 15, 2024
+        ('%d %B %Y', None),   # 15 January 2024
+        ('%d %b %Y', None),   # 15 Jan 2024
+    ]
+    
+    for fmt, is_dayfirst in formats_to_try:
+        try:
+            parsed = datetime.strptime(date_str, fmt)
+            return parsed.isoformat(), None
+        except ValueError:
+            continue
+    
+    # Try to detect format from the value itself
+    # Check for patterns like dd/mm/yyyy vs mm/dd/yyyy
+    date_parts = re.split(r'[/\-.]', date_str.split()[0])  # Split on common separators
+    if len(date_parts) == 3:
+        part1, part2, part3 = date_parts
+        
+        try:
+            p1, p2, p3 = int(part1), int(part2), int(part3)
+            
+            # If first part > 12, it must be day (European format)
+            if p1 > 12 and p1 <= 31:
+                # dd/mm/yyyy format
+                if p3 > 100:  # 4-digit year
+                    parsed = datetime(p3, p2, p1)
+                else:  # 2-digit year
+                    year = 2000 + p3 if p3 < 50 else 1900 + p3
+                    parsed = datetime(year, p2, p1)
+                return parsed.isoformat(), None
+            
+            # If second part > 12, it must be day (US format)
+            elif p2 > 12 and p2 <= 31:
+                # mm/dd/yyyy format
+                if p3 > 100:
+                    parsed = datetime(p3, p1, p2)
+                else:
+                    year = 2000 + p3 if p3 < 50 else 1900 + p3
+                    parsed = datetime(year, p1, p2)
+                return parsed.isoformat(), None
+            
+            # If first part looks like a year
+            elif p1 > 1900:
+                # yyyy/mm/dd format
+                parsed = datetime(p1, p2, p3)
+                return parsed.isoformat(), None
+            
+            # Ambiguous case (both could be day or month)
+            # Use column_dates context to help decide if provided
+            elif column_dates:
+                # Check if other dates in column have values > 12 in first position
+                dayfirst_count = sum(1 for d in column_dates 
+                                    if d and int(re.split(r'[/\-.]', str(d).split()[0])[0]) > 12)
+                if dayfirst_count > len(column_dates) * 0.3:
+                    # Likely European format
+                    try:
+                        parsed = pd.to_datetime(date_str, dayfirst=True)
+                        return parsed.isoformat(), "Date format ambiguous, assumed dd/mm/yyyy"
+                    except:
+                        pass
+            
+            # Default: try European format first (more common internationally)
+            try:
+                parsed = pd.to_datetime(date_str, dayfirst=True)
+                warning = "Date format ambiguous, assumed dd/mm/yyyy (European format)"
+                return parsed.isoformat(), warning
+            except:
+                pass
+            
+        except (ValueError, IndexError):
+            pass
+    
+    # Last resort: let pandas try
+    try:
+        parsed = pd.to_datetime(date_str, errors='coerce')
+        if pd.notna(parsed):
+            return parsed.isoformat(), "Date parsed with potential ambiguity"
+    except:
+        pass
+    
+    return None, f"Could not parse date: {date_str}"
 
 
 def auto_prioritize(text: str, sentiment: str, confidence: float) -> str:
@@ -237,7 +381,7 @@ class UploadService:
         df: pd.DataFrame,
         text_column: str,
         analyze_sentiment: bool = True
-    ) -> List[Dict]:
+    ) -> Tuple[List[Dict], List[str]]:
         """
         Process DataFrame and extract feedback data
         
@@ -251,8 +395,11 @@ class UploadService:
         Omitted columns (not extracted):
         - customer_email
         - service_type
+        
+        Returns: (results, date_warnings)
         """
         results = []
+        date_warnings = []
         
         # Normalize column names
         df.columns = [str(col).lower().strip() for col in df.columns]
@@ -264,6 +411,11 @@ class UploadService:
         flight_col = self._find_column(df, ['flight_number', 'flight', 'flight_no', 'flight_id'])
         date_col = self._find_column(df, ['flight_date', 'date', 'travel_date', 'flight_dt', 'feedback_date'])
         lang_col = self._find_column(df, ['language', 'lang', 'language_code'])
+        
+        # Pre-collect all date values for context-based parsing
+        all_dates = []
+        if date_col:
+            all_dates = [row.get(date_col) for _, row in df.iterrows() if pd.notna(row.get(date_col))]
         
         for idx, row in df.iterrows():
             text = str(row.get(text_column, '')).strip()
@@ -285,13 +437,13 @@ class UploadService:
                 if flight_number == 'nan':
                     flight_number = None
             
-            # Extract flight date
+            # Extract flight date with robust parsing
             flight_date = None
             if date_col and pd.notna(row.get(date_col)):
-                try:
-                    flight_date = pd.to_datetime(row[date_col]).isoformat()
-                except:
-                    pass
+                parsed_date, warning = normalize_date(row[date_col], all_dates)
+                flight_date = parsed_date
+                if warning and len(date_warnings) < 10:  # Limit warnings
+                    date_warnings.append(f"Row {idx + 1}: {warning}")
             
             # Extract language (or auto-detect later)
             specified_language = None
@@ -345,7 +497,7 @@ class UploadService:
             
             results.append(feedback_data)
         
-        return results
+        return results, date_warnings
     
     async def save_file(self, file: UploadFile) -> str:
         """

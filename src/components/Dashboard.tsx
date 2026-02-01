@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, Target, Plane, CheckCircle, TrendingDown, Download, BarChart3, ArrowUpRight, ArrowDownRight, Star, Users, Settings, X } from 'lucide-react';
+import { MessageSquare, ThumbsUp, ThumbsDown, Minus, TrendingUp, Loader2, RefreshCw, Upload, FileText, Clock, Globe, AlertTriangle, AlertCircle, Target, Plane, CheckCircle, TrendingDown, Download, BarChart3, ArrowUpRight, ArrowDownRight, Star, Users, Settings, X } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar, LineChart, Line, ReferenceLine } from 'recharts';
-import { analyticsApi, getAccessToken, TrendData, TopComplaint, RouteData, CsatData, ResponseTimeData, ComparisonData, NpsData, NpsHistoryData } from '../lib/api';
+import { analyticsApi, getAccessToken, TrendData, TopComplaint, RouteData, CsatData, ResponseTimeData, ComparisonData, NpsData, NpsHistoryData, TopRoutesResponse } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
 interface DashboardProps {
@@ -415,7 +415,176 @@ function NpsSettingsModal({
   );
 }
 
-// NPS History Line Chart with custom target/industry
+// Custom dot component for NPS chart - shows green/red based on target, gray for insufficient data
+interface CustomDotProps {
+  cx?: number;
+  cy?: number;
+  payload?: { nps: number | null; month: string; status: string; has_sufficient_data: boolean; has_data?: boolean };
+  targetNps: number;
+}
+
+function NpsCustomDot({ cx, cy, payload, targetNps }: CustomDotProps) {
+  if (!cx || !cy || !payload) return null;
+  
+  // Handle no data for this month - hollow circle with dashed border
+  if (payload.has_data === false) {
+    return (
+      <g>
+        {/* Hollow circle for no data */}
+        <circle 
+          cx={cx} 
+          cy={cy} 
+          r={6} 
+          fill="white" 
+          stroke="#D1D5DB" 
+          strokeWidth={2} 
+          strokeDasharray="3 2"
+        />
+        {/* X mark to indicate no data */}
+        <line x1={cx - 3} y1={cy - 3} x2={cx + 3} y2={cy + 3} stroke="#9CA3AF" strokeWidth={1.5} />
+        <line x1={cx + 3} y1={cy - 3} x2={cx - 3} y2={cy + 3} stroke="#9CA3AF" strokeWidth={1.5} />
+      </g>
+    );
+  }
+  
+  // Handle insufficient data (some data but below threshold)
+  if (payload.nps === null || !payload.has_sufficient_data) {
+    return (
+      <g>
+        {/* Amber/yellow dot for insufficient data */}
+        <circle cx={cx} cy={cy} r={8} fill="#F59E0B" opacity={0.2} />
+        <circle cx={cx} cy={cy} r={5} fill="#FEF3C7" stroke="#F59E0B" strokeWidth={2} />
+        {/* Question mark indicator */}
+        <text x={cx} y={cy + 3} textAnchor="middle" fill="#D97706" fontSize={8} fontWeight="bold">?</text>
+      </g>
+    );
+  }
+  
+  const isAboveTarget = payload.nps >= targetNps;
+  const fillColor = isAboveTarget ? '#10B981' : '#EF4444';
+  const strokeColor = isAboveTarget ? '#059669' : '#DC2626';
+  
+  return (
+    <g>
+      {/* Outer glow effect */}
+      <circle cx={cx} cy={cy} r={10} fill={fillColor} opacity={0.2} />
+      {/* Main dot */}
+      <circle cx={cx} cy={cy} r={6} fill={fillColor} stroke={strokeColor} strokeWidth={2} />
+      {/* Arrow indicator */}
+      {isAboveTarget ? (
+        <polygon 
+          points={`${cx},${cy - 16} ${cx - 4},${cy - 10} ${cx + 4},${cy - 10}`} 
+          fill={fillColor} 
+        />
+      ) : (
+        <polygon 
+          points={`${cx},${cy + 16} ${cx - 4},${cy + 10} ${cx + 4},${cy + 10}`} 
+          fill={fillColor} 
+        />
+      )}
+    </g>
+  );
+}
+
+// Custom tooltip for NPS chart
+interface NpsTooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload: { 
+    month: string; 
+    nps: number | null; 
+    total_responses: number; 
+    promoters: number; 
+    detractors: number; 
+    passives?: number;
+    promoters_pct?: number;
+    detractors_pct?: number;
+    has_sufficient_data: boolean;
+    has_data?: boolean;
+    status: string 
+  } }>;
+  targetNps: number;
+}
+
+function NpsCustomTooltip({ active, payload, targetNps }: NpsTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  
+  const data = payload[0].payload;
+  
+  // Handle no data for this month
+  if (data.has_data === false || (data.nps === null && data.total_responses === 0)) {
+    return (
+      <div className="bg-white p-4 rounded-lg shadow-lg border border-gray-200 border-dashed">
+        <p className="font-semibold text-gray-800 text-lg mb-2">{data.month}</p>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-3 py-2 rounded bg-gray-100">
+            <AlertCircle className="h-5 w-5 text-gray-400" />
+            <span className="font-medium text-gray-500">No Data Available</span>
+          </div>
+          <p className="text-xs text-gray-400 text-center">
+            No feedback was collected during this month
+          </p>
+        </div>
+      </div>
+    );
+  }
+  
+  // Handle insufficient data (some data but below threshold)
+  if (!data.has_sufficient_data) {
+    return (
+      <div className="bg-white p-4 rounded-lg shadow-lg border border-gray-200">
+        <p className="font-semibold text-gray-800 text-lg mb-2">{data.month}</p>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-2 py-1 rounded bg-amber-50">
+            <AlertCircle className="h-4 w-4 text-amber-500" />
+            <span className="font-medium text-amber-600">Insufficient Data</span>
+          </div>
+          <div className="text-sm text-gray-500">
+            <p>Only {data.total_responses} response{data.total_responses !== 1 ? 's' : ''}</p>
+            <p className="text-xs text-gray-400">(Minimum 5 required for reliable NPS)</p>
+            {data.nps !== null && (
+              <p className="mt-1 text-amber-600">Preliminary NPS: {data.nps}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  const isAboveTarget = data.nps !== null && data.nps >= targetNps;
+  const diff = data.nps !== null ? data.nps - targetNps : 0;
+  
+  return (
+    <div className="bg-white p-4 rounded-lg shadow-lg border border-gray-200">
+      <p className="font-semibold text-gray-800 text-lg mb-2">{data.month}</p>
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <span className="text-gray-600">NPS Score:</span>
+          <span className={`font-bold text-xl ${isAboveTarget ? 'text-green-600' : 'text-red-600'}`}>
+            {data.nps}
+          </span>
+        </div>
+        <div className={`flex items-center gap-2 px-2 py-1 rounded ${isAboveTarget ? 'bg-green-50' : 'bg-red-50'}`}>
+          {isAboveTarget ? (
+            <TrendingUp className="h-4 w-4 text-green-600" />
+          ) : (
+            <TrendingDown className="h-4 w-4 text-red-600" />
+          )}
+          <span className={`font-medium ${isAboveTarget ? 'text-green-700' : 'text-red-700'}`}>
+            {isAboveTarget ? 'Above Target' : 'Below Target'} ({diff > 0 ? '+' : ''}{diff})
+          </span>
+        </div>
+        <div className="border-t border-gray-100 pt-2 mt-2 text-sm text-gray-500">
+          <p>Responses: {data.total_responses}</p>
+          <p>Promoters: {data.promoters} ({data.promoters_pct?.toFixed(1) ?? 0}%)</p>
+          <p>Detractors: {data.detractors} ({data.detractors_pct?.toFixed(1) ?? 0}%)</p>
+          {data.passives !== undefined && <p>Passives: {data.passives}</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// NPS History Line Chart with custom target/industry - Enhanced version
 function NPSHistoryChart({ data, customTarget, customIndustry }: { data: NpsHistoryData | null; customTarget?: number; customIndustry?: number }) {
   if (!data || data.history.length === 0) {
     return (
@@ -429,44 +598,219 @@ function NPSHistoryChart({ data, customTarget, customIndustry }: { data: NpsHist
   const targetNps = customTarget ?? data.target_nps;
   const industryBenchmark = customIndustry ?? data.industry_benchmark;
 
+  // Enhance data with status for tooltip - handle null NPS values and no data
+  const enhancedHistory = data.history.map(item => ({
+    ...item,
+    // Use null for chart gaps, but provide display value for rendering
+    displayNps: item.nps,
+    status: item.has_data === false 
+      ? 'no-data'
+      : (item.nps !== null && item.has_sufficient_data 
+        ? (item.nps >= targetNps ? 'above' : 'below') 
+        : 'insufficient'),
+    target: targetNps,
+    industry: industryBenchmark
+  }));
+
+  // Filter only valid NPS values for calculations (has sufficient data)
+  const validValues = enhancedHistory
+    .filter(h => h.nps !== null && h.has_sufficient_data && h.has_data !== false)
+    .map(h => h.nps as number);
+
+  // Count months with no data
+  const monthsWithNoData = enhancedHistory.filter(h => h.has_data === false).length;
+
+  // Calculate min/max for better Y-axis scaling
+  const allNpsValues = validValues.length > 0 ? validValues : [0];
+  const minNps = Math.min(...allNpsValues, targetNps, industryBenchmark);
+  const maxNps = Math.max(...allNpsValues, targetNps, industryBenchmark);
+  const yMin = Math.max(-100, Math.floor(minNps / 10) * 10 - 20);
+  const yMax = Math.min(100, Math.ceil(maxNps / 10) * 10 + 20);
+
+  // Create gradient colors for the line based on target
+  const gradientOffset = () => {
+    if (validValues.length === 0) return 0.5;
+    const dataMax = Math.max(...validValues);
+    const dataMin = Math.min(...validValues);
+    
+    if (dataMax <= targetNps) return 0;
+    if (dataMin >= targetNps) return 1;
+    
+    return (targetNps - dataMin) / (dataMax - dataMin);
+  };
+
+  const off = gradientOffset();
+
+  // Use summary from API if available, otherwise calculate
+  const summary = data.summary || {
+    avg_nps: validValues.length > 0 ? Math.round(validValues.reduce((a, b) => a + b, 0) / validValues.length) : null,
+    max_nps: validValues.length > 0 ? Math.max(...validValues) : null,
+    min_nps: validValues.length > 0 ? Math.min(...validValues) : null,
+    months_above_target: validValues.filter(v => v >= targetNps).length,
+    total_months: data.history.length,
+    months_with_data: validValues.length
+  };
+
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={data.history}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-        <XAxis dataKey="month" stroke="#6B7280" fontSize={12} />
-        <YAxis domain={[-100, 100]} stroke="#6B7280" fontSize={12} />
-        <Tooltip
-          contentStyle={{ borderRadius: '8px', border: '1px solid #E5E7EB' }}
-          formatter={(value: number, name: string) => {
-            if (name === 'nps') return [value, 'NPS Score'];
-            if (name === 'target') return [value, 'Target'];
-            if (name === 'benchmark') return [value, 'Industry Avg'];
-            return [value, name];
-          }}
-        />
-        <Legend />
-        {/* Target line */}
-        <ReferenceLine y={targetNps} stroke="#10B981" strokeDasharray="5 5" label={{ value: `Target: ${targetNps}`, fill: '#10B981', fontSize: 11 }} />
-        {/* Industry benchmark line */}
-        <ReferenceLine y={industryBenchmark} stroke="#6B7280" strokeDasharray="3 3" label={{ value: `Industry: ${industryBenchmark}`, fill: '#6B7280', fontSize: 11 }} />
-        {/* NPS line */}
-        <Line
-          type="monotone"
-          dataKey="nps"
-          stroke="#3B82F6"
-          strokeWidth={3}
-          dot={{ r: 6, fill: '#3B82F6' }}
-          activeDot={{ r: 8 }}
-          name="NPS Score"
-        />
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="relative">
+      {/* Legend */}
+      <div className="flex justify-center gap-4 mb-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded-full bg-green-500" />
+          <span className="text-sm text-gray-600">Above Target</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded-full bg-red-500" />
+          <span className="text-sm text-gray-600">Below Target</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded-full bg-amber-400 border-2 border-amber-500" />
+          <span className="text-sm text-gray-600">Insufficient Data</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-4 rounded-full bg-white border-2 border-dashed border-gray-300" />
+          <span className="text-sm text-gray-600">No Data</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-0.5 bg-green-500" style={{ borderTop: '2px dashed #10B981' }} />
+          <span className="text-sm text-gray-600">Target: {targetNps}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-4 h-0.5 bg-gray-400" style={{ borderTop: '2px dashed #9CA3AF' }} />
+          <span className="text-sm text-gray-600">Industry: {industryBenchmark}</span>
+        </div>
+      </div>
+
+      {/* Warning if many months have no data */}
+      {monthsWithNoData > 0 && (
+        <div className="flex items-center justify-center gap-2 mb-2 text-sm text-amber-600 bg-amber-50 py-1 px-3 rounded-full mx-auto w-fit">
+          <AlertCircle className="h-4 w-4" />
+          <span>{monthsWithNoData} month{monthsWithNoData !== 1 ? 's' : ''} with no feedback data</span>
+        </div>
+      )}
+      
+      <ResponsiveContainer width="100%" height={320}>
+        <LineChart data={enhancedHistory} margin={{ top: 20, right: 30, left: 20, bottom: 10 }}>
+          <defs>
+            {/* Gradient for line - green above target, red below */}
+            <linearGradient id="npsLineGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset={0} stopColor="#10B981" stopOpacity={1} />
+              <stop offset={off} stopColor="#10B981" stopOpacity={1} />
+              <stop offset={off} stopColor="#EF4444" stopOpacity={1} />
+              <stop offset={1} stopColor="#EF4444" stopOpacity={1} />
+            </linearGradient>
+            {/* Area gradient */}
+            <linearGradient id="npsAreaGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.2} />
+              <stop offset="100%" stopColor="#3B82F6" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          
+          <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+          <XAxis 
+            dataKey="month" 
+            stroke="#6B7280" 
+            fontSize={12} 
+            tickLine={false}
+            axisLine={{ stroke: '#E5E7EB' }}
+          />
+          <YAxis 
+            domain={[yMin, yMax]} 
+            stroke="#6B7280" 
+            fontSize={12}
+            tickLine={false}
+            axisLine={{ stroke: '#E5E7EB' }}
+            tickFormatter={(value) => `${value}`}
+          />
+          
+          <Tooltip content={<NpsCustomTooltip targetNps={targetNps} />} />
+          
+          {/* Target line - prominent */}
+          <ReferenceLine 
+            y={targetNps} 
+            stroke="#10B981" 
+            strokeWidth={2}
+            strokeDasharray="8 4" 
+            label={{ 
+              value: `Target: ${targetNps}`, 
+              fill: '#10B981', 
+              fontSize: 12,
+              fontWeight: 'bold',
+              position: 'right'
+            }} 
+          />
+          
+          {/* Industry benchmark line */}
+          <ReferenceLine 
+            y={industryBenchmark} 
+            stroke="#9CA3AF" 
+            strokeWidth={1}
+            strokeDasharray="4 4" 
+            label={{ 
+              value: `Industry: ${industryBenchmark}`, 
+              fill: '#9CA3AF', 
+              fontSize: 11,
+              position: 'right'
+            }} 
+          />
+          
+          {/* Area under the line for visual emphasis */}
+          <Area
+            type="monotone"
+            dataKey="nps"
+            stroke="none"
+            fill="url(#npsAreaGradient)"
+            connectNulls={false}
+          />
+          
+          {/* Main NPS line with gradient coloring */}
+          <Line
+            type="monotone"
+            dataKey="nps"
+            stroke="#3B82F6"
+            strokeWidth={3}
+            dot={(props: CustomDotProps) => <NpsCustomDot {...props} targetNps={targetNps} />}
+            activeDot={{ r: 10, fill: '#3B82F6', stroke: '#1D4ED8', strokeWidth: 2 }}
+            name="NPS Score"
+            connectNulls={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+      
+      {/* Summary stats below chart */}
+      <div className="flex justify-center gap-8 mt-4 pt-4 border-t border-gray-100">
+        <div className="text-center">
+          <p className="text-sm text-gray-500">Avg NPS</p>
+          <p className="text-xl font-bold text-blue-600">
+            {summary.avg_nps !== null ? summary.avg_nps : 'N/A'}
+          </p>
+        </div>
+        <div className="text-center">
+          <p className="text-sm text-gray-500">Best Month</p>
+          <p className="text-xl font-bold text-green-600">
+            {summary.max_nps !== null ? summary.max_nps : 'N/A'}
+          </p>
+        </div>
+        <div className="text-center">
+          <p className="text-sm text-gray-500">Worst Month</p>
+          <p className="text-xl font-bold text-red-600">
+            {summary.min_nps !== null ? summary.min_nps : 'N/A'}
+          </p>
+        </div>
+        <div className="text-center">
+          <p className="text-sm text-gray-500">Months Above Target</p>
+          <p className="text-xl font-bold text-green-600">
+            {summary.months_above_target}/{summary.months_with_data}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 
-// Enhanced Top Routes Chart with ratings
-function TopRoutesChart({ data }: { data: RouteData[] }) {
-  if (!data || data.length === 0) {
+// Enhanced Top Routes Chart with ratings and ranking methodology
+function TopRoutesChart({ data }: { data: TopRoutesResponse | null }) {
+  if (!data || !data.routes || data.routes.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-[300px] text-gray-500">
         <Plane className="h-12 w-12 mb-2 opacity-50" />
@@ -475,16 +819,47 @@ function TopRoutesChart({ data }: { data: RouteData[] }) {
     );
   }
 
-  // Sort by total and take top 8
-  const topRoutes = [...data]
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 8);
+  const { routes, ranking_method, ranking_description, min_reviews_threshold } = data;
+
+  // Get confidence badge color
+  const getConfidenceBadge = (confidence?: 'high' | 'medium' | 'low' | 'none', meetsThreshold?: boolean) => {
+    if (!meetsThreshold) {
+      return { color: 'bg-gray-100 text-gray-500', icon: AlertCircle, label: 'Low sample' };
+    }
+    switch (confidence) {
+      case 'high': return { color: 'bg-green-100 text-green-700', icon: CheckCircle, label: 'High confidence' };
+      case 'medium': return { color: 'bg-blue-100 text-blue-600', icon: TrendingUp, label: 'Medium confidence' };
+      case 'low': return { color: 'bg-yellow-100 text-yellow-700', icon: AlertTriangle, label: 'Low confidence' };
+      default: return { color: 'bg-gray-100 text-gray-500', icon: AlertCircle, label: 'Insufficient data' };
+    }
+  };
+
+  // Get ranking method label
+  const getRankingLabel = () => {
+    switch (ranking_method) {
+      case 'weighted': return 'Wilson Score (statistically weighted)';
+      case 'rating': return 'Highest Rated';
+      case 'volume': return 'Most Reviewed';
+      default: return 'Ranked';
+    }
+  };
 
   return (
     <div className="space-y-3">
-      {topRoutes.map((route, index) => {
+      {/* Ranking methodology info */}
+      <div className="flex items-center gap-2 p-2 bg-blue-50 rounded-lg text-xs text-blue-700">
+        <BarChart3 className="h-4 w-4" />
+        <span className="font-medium">{getRankingLabel()}</span>
+        {min_reviews_threshold > 0 && (
+          <span className="text-blue-600">• Min {min_reviews_threshold} reviews required</span>
+        )}
+      </div>
+      
+      {routes.slice(0, 8).map((route, index) => {
         const rating = route.avg_rating || 0;
         const positivePct = route.positive_pct || (route.total > 0 ? (route.positive / route.total) * 100 : 0);
+        const confidenceBadge = getConfidenceBadge(route.confidence, route.meets_threshold);
+        const ConfidenceIcon = confidenceBadge.icon;
         
         // Color based on rating
         const getRatingColor = (r: number) => {
@@ -495,7 +870,7 @@ function TopRoutesChart({ data }: { data: RouteData[] }) {
         };
 
         return (
-          <div key={route.route} className="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg transition-colors">
+          <div key={route.route} className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${route.meets_threshold ? 'hover:bg-gray-50' : 'hover:bg-gray-50 opacity-75'}`}>
             {/* Rank */}
             <div className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold ${
               index === 0 ? 'bg-yellow-100 text-yellow-700' :
@@ -511,6 +886,10 @@ function TopRoutesChart({ data }: { data: RouteData[] }) {
               <div className="flex items-center gap-2">
                 <Plane className="h-4 w-4 text-blue-500" />
                 <span className="font-medium text-gray-800 truncate">{route.route}</span>
+                {/* Confidence indicator */}
+                <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium ${confidenceBadge.color}`} title={confidenceBadge.label}>
+                  <ConfidenceIcon className="h-3 w-3" />
+                </span>
               </div>
               <div className="text-xs text-gray-500">{route.total} reviews</div>
             </div>
@@ -576,7 +955,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null);
   const [npsData, setNpsData] = useState<NpsData | null>(null);
   const [npsHistory, setNpsHistory] = useState<NpsHistoryData | null>(null);
-  const [topRoutes, setTopRoutes] = useState<RouteData[]>([]);
+  const [topRoutesData, setTopRoutesData] = useState<TopRoutesResponse | null>(null);
   const [showComparison, setShowComparison] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -612,23 +991,41 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       setError(null);
 
       // Build query params for filters
-      const statsParams: Record<string, string> = { days: '30' };
-      if (dateRange.from) statsParams.date_from = dateRange.from;
-      if (dateRange.to) statsParams.date_to = dateRange.to;
+      // Only send days parameter if we have no custom date range
+      // If no filters at all, we get all data (show_all behavior)
+      const statsParams: Record<string, string> = {};
+      const hasDateFilter = Boolean(dateRange.from || dateRange.to);
+      
+      if (dateRange.from) {
+        statsParams.date_from = dateRange.from;
+      }
+      if (dateRange.to) {
+        statsParams.date_to = dateRange.to;
+      }
+      // Only use days filter if no custom date range specified
+      if (!hasDateFilter) {
+        // No date filters - get all data
+        statsParams.show_all = 'true';
+      }
       if (sentimentFilter !== 'all') statsParams.sentiment = sentimentFilter;
 
-      // Fetch all data in parallel
+      // Build common filter params for all endpoints
+      const dateFilterParams = hasDateFilter 
+        ? { date_from: dateRange.from, date_to: dateRange.to } 
+        : { show_all: true };
+
+      // Fetch all data in parallel - pass date filters to all endpoints
       const [statsData, trendsData, complaintsData, routesData, csatResult, responseData, comparisonResult, npsResult, npsHistoryResult, topRoutesResult] = await Promise.all([
         analyticsApi.getStats(statsParams).catch(() => null),
-        analyticsApi.getTrends({ days: 30 }).catch(() => []),
-        analyticsApi.getTopComplaints(5).catch(() => []),
-        analyticsApi.getFeedbackByRoute(8).catch(() => []),
-        analyticsApi.getCsatScore(30).catch(() => null),
+        analyticsApi.getTrends({ days: 30, ...dateFilterParams }).catch(() => []),
+        analyticsApi.getTopComplaints({ limit: 5, date_from: dateRange.from, date_to: dateRange.to }).catch(() => []),
+        analyticsApi.getFeedbackByRoute({ limit: 8, date_from: dateRange.from, date_to: dateRange.to }).catch(() => []),
+        analyticsApi.getCsatScore(hasDateFilter ? { date_from: dateRange.from, date_to: dateRange.to } : { show_all: true }).catch(() => null),
         analyticsApi.getResponseTime().catch(() => null),
-        analyticsApi.getComparison(30).catch(() => null),
-        analyticsApi.getNpsScore(30).catch(() => null),
-        analyticsApi.getNpsHistory(6).catch(() => null),
-        analyticsApi.getTopRoutes(10).catch(() => []),
+        analyticsApi.getComparison({ days: 30, date_from: dateRange.from, date_to: dateRange.to }).catch(() => null),
+        analyticsApi.getNpsScore(hasDateFilter ? { date_from: dateRange.from, date_to: dateRange.to } : { show_all: true }).catch(() => null),
+        analyticsApi.getNpsHistory({ months: 6, date_from: dateRange.from, date_to: dateRange.to }).catch(() => null),
+        analyticsApi.getTopRoutes({ limit: 10, date_from: dateRange.from, date_to: dateRange.to }).catch(() => ({ routes: [], ranking_method: 'weighted' as const, ranking_description: '', min_reviews_threshold: 5, total_routes_analyzed: 0 })),
       ]);
 
       if (statsData) {
@@ -643,7 +1040,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       setComparisonData(comparisonResult);
       setNpsData(npsResult);
       setNpsHistory(npsHistoryResult);
-      setTopRoutes(topRoutesResult);
+      setTopRoutesData(topRoutesResult);
       setLastUpdated(new Date());
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -1223,10 +1620,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                   <Plane className="h-5 w-5 text-blue-600" />
                   <h3 className="text-lg font-semibold text-[#1F2937]">Top Routes by Feedback</h3>
                 </div>
-                <p className="text-sm text-[#6B7280] mt-1">Routes with most reviews and their ratings</p>
+                <p className="text-sm text-[#6B7280] mt-1">Routes ranked by Wilson Score (balances rating & volume)</p>
               </div>
               <div className="p-4 max-h-[350px] overflow-y-auto">
-                <TopRoutesChart data={topRoutes} />
+                <TopRoutesChart data={topRoutesData} />
               </div>
             </div>
           </div>

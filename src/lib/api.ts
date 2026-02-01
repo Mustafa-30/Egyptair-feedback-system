@@ -268,10 +268,12 @@ export const analyticsApi = {
     return apiFetch<DashboardStats>(`/analytics/dashboard${query ? `?${query}` : ''}`);
   },
 
-  getTrends: (params?: { days?: number; granularity?: string }) => {
+  getTrends: (params?: { days?: number; granularity?: string; date_from?: string; date_to?: string }) => {
     const searchParams = new URLSearchParams();
     if (params?.days) searchParams.append('days', params.days.toString());
     if (params?.granularity) searchParams.append('granularity', params.granularity);
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
     
     const query = searchParams.toString();
     return apiFetch<TrendData[]>(`/analytics/sentiment-trends${query ? `?${query}` : ''}`);
@@ -279,41 +281,79 @@ export const analyticsApi = {
 
   getCharts: () => apiFetch<ChartData>('/analytics/summary'),
 
-  getTopComplaints: (limit?: number) => {
-    const query = limit ? `?limit=${limit}` : '';
-    return apiFetch<TopComplaint[]>(`/analytics/top-complaints${query}`);
+  getTopComplaints: (params?: { limit?: number; date_from?: string; date_to?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
+    const query = searchParams.toString();
+    return apiFetch<TopComplaint[]>(`/analytics/top-complaints${query ? `?${query}` : ''}`);
   },
 
-  getFeedbackByRoute: (limit?: number) => {
-    const query = limit ? `?limit=${limit}` : '';
-    return apiFetch<RouteData[]>(`/analytics/feedback-by-route${query}`);
+  getFeedbackByRoute: (params?: { limit?: number; date_from?: string; date_to?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
+    const query = searchParams.toString();
+    return apiFetch<RouteData[]>(`/analytics/feedback-by-route${query ? `?${query}` : ''}`);
   },
 
-  getCsatScore: (days?: number) => {
-    const query = days ? `?days=${days}` : '';
-    return apiFetch<CsatData>(`/analytics/csat-score${query}`);
+  getCsatScore: (params?: { days?: number; date_from?: string; date_to?: string; show_all?: boolean }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.days) searchParams.append('days', params.days.toString());
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
+    if (params?.show_all) searchParams.append('show_all', 'true');
+    const query = searchParams.toString();
+    return apiFetch<CsatData>(`/analytics/csat-score${query ? `?${query}` : ''}`);
   },
 
   getResponseTime: () => apiFetch<ResponseTimeData>('/analytics/response-time'),
 
-  getComparison: (days?: number) => {
-    const query = days ? `?days=${days}` : '';
-    return apiFetch<ComparisonData>(`/analytics/comparison${query}`);
+  getComparison: (params?: { days?: number; date_from?: string; date_to?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.days) searchParams.append('days', params.days.toString());
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
+    const query = searchParams.toString();
+    return apiFetch<ComparisonData>(`/analytics/comparison${query ? `?${query}` : ''}`);
   },
 
-  getNpsScore: (days?: number) => {
-    const query = days ? `?days=${days}` : '';
-    return apiFetch<NpsData>(`/analytics/nps-score${query}`);
+  getNpsScore: (params?: { days?: number; date_from?: string; date_to?: string; show_all?: boolean }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.days) searchParams.append('days', params.days.toString());
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
+    if (params?.show_all) searchParams.append('show_all', 'true');
+    const query = searchParams.toString();
+    return apiFetch<NpsData>(`/analytics/nps-score${query ? `?${query}` : ''}`);
   },
 
-  getNpsHistory: (months?: number) => {
-    const query = months ? `?months=${months}` : '';
-    return apiFetch<NpsHistoryData>(`/analytics/nps-history${query}`);
+  getNpsHistory: (params?: { months?: number; date_from?: string; date_to?: string }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.months) searchParams.append('months', params.months.toString());
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
+    const query = searchParams.toString();
+    return apiFetch<NpsHistoryData>(`/analytics/nps-history${query ? `?${query}` : ''}`);
   },
 
-  getTopRoutes: (limit?: number) => {
-    const query = limit ? `?limit=${limit}` : '';
-    return apiFetch<RouteData[]>(`/analytics/top-routes${query}`);
+  getTopRoutes: (params?: { 
+    limit?: number; 
+    sort_by?: 'volume' | 'rating' | 'weighted';
+    min_reviews?: number;
+    date_from?: string; 
+    date_to?: string 
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.limit) searchParams.append('limit', params.limit.toString());
+    if (params?.sort_by) searchParams.append('sort_by', params.sort_by);
+    if (params?.min_reviews) searchParams.append('min_reviews', params.min_reviews.toString());
+    if (params?.date_from) searchParams.append('date_from', params.date_from);
+    if (params?.date_to) searchParams.append('date_to', params.date_to);
+    const query = searchParams.toString();
+    return apiFetch<TopRoutesResponse>(`/analytics/top-routes${query ? `?${query}` : ''}`);
   },
 };
 
@@ -610,6 +650,17 @@ export interface RouteData {
   avg_rating?: number;
   positive_pct?: number;
   negative_pct?: number;
+  wilson_score?: number;
+  confidence?: 'high' | 'medium' | 'low' | 'none';
+  meets_threshold?: boolean;
+}
+
+export interface TopRoutesResponse {
+  routes: RouteData[];
+  ranking_method: 'volume' | 'rating' | 'weighted';
+  ranking_description: string;
+  min_reviews_threshold: number;
+  total_routes_analyzed: number;
 }
 
 export interface NpsData {
@@ -630,16 +681,31 @@ export interface NpsData {
 
 export interface NpsHistoryItem {
   month: string;
-  nps: number;
+  nps: number | null;
   total_responses: number;
   promoters: number;
   detractors: number;
+  passives?: number;
+  promoters_pct?: number;
+  detractors_pct?: number;
+  has_sufficient_data: boolean;
+  has_data?: boolean;  // false when no feedback exists for this month
+}
+
+export interface NpsHistorySummary {
+  avg_nps: number | null;
+  max_nps: number | null;
+  min_nps: number | null;
+  months_above_target: number;
+  total_months: number;
+  months_with_data: number;
 }
 
 export interface NpsHistoryData {
   history: NpsHistoryItem[];
   target_nps: number;
   industry_benchmark: number;
+  summary?: NpsHistorySummary;
 }
 
 export interface CsatData {

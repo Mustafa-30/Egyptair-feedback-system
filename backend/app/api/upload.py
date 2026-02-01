@@ -94,8 +94,8 @@ async def process_upload(
     # Use provided text column or detected one
     text_col = text_column or info["text_column"]
     
-    # Process data
-    processed_data = upload_service.process_feedback_data(
+    # Process data - now returns (results, date_warnings)
+    processed_data, date_warnings = upload_service.process_feedback_data(
         df,
         text_col,
         analyze_sentiment=analyze_sentiment
@@ -221,6 +221,7 @@ async def process_upload(
         "duplicates_removed": duplicates_removed,
         "duplicates_skipped": duplicates_skipped,
         "duplicates_in_file": duplicates_in_file,
+        "date_warnings": date_warnings if date_warnings else [],  # Date parsing warnings
         "errors": errors[:10] if errors else [],  # Return first 10 errors
         "sample_results": items_to_insert[:5] if items_to_insert else []
     }
@@ -247,6 +248,13 @@ async def analyze_batch(
     # Use provided text column or detected one
     text_col = text_column or info["text_column"]
     
+    # Process with date parsing (but not sentiment) - we'll analyze separately
+    processed_data, date_warnings = upload_service.process_feedback_data(
+        df.copy(),
+        text_col,
+        analyze_sentiment=False
+    )
+    
     # Get texts to analyze
     texts = df[text_col].dropna().astype(str).tolist()
     
@@ -266,6 +274,7 @@ async def analyze_batch(
     return {
         "filename": file.filename,
         "total_analyzed": len(results),
+        "date_warnings": date_warnings if date_warnings else [],
         "summary": {
             "positive": sentiment_counts["positive"],
             "negative": sentiment_counts["negative"],

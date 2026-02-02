@@ -128,6 +128,26 @@ async def get_reports_overview(
 # Report Generation Endpoints
 # ============================================
 
+@router.get("/test-generate")
+async def test_generate(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Test report generation without full generation"""
+    import traceback
+    try:
+        service = ReportService(db)
+        feedbacks, stats = service.get_filtered_feedback()
+        return {
+            "status": "ok",
+            "feedbacks": len(feedbacks),
+            "stats": stats,
+            "arabic_font": service.arabic_font
+        }
+    except Exception as e:
+        traceback.print_exc()
+        return {"error": str(e)}
+
 @router.post("/generate")
 async def generate_report(
     report_type: str = Query("summary", description="summary or detailed"),
@@ -141,6 +161,8 @@ async def generate_report(
     include_trend_chart: bool = Query(True),
     include_stats_table: bool = Query(True),
     include_negative_samples: bool = Query(True),
+    include_nps_score: bool = Query(True),
+    include_top_routes: bool = Query(True),
     include_logo: bool = Query(True),
     orientation: str = Query("portrait", description="portrait or landscape"),
     db: Session = Depends(get_db),
@@ -149,119 +171,139 @@ async def generate_report(
     """
     Generate a new report (PDF or Excel)
     """
-    service = ReportService(db)
+    import traceback
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting report generation: type={report_type}, title={title}")
     
-    # Parse dates
-    parsed_date_from = None
-    parsed_date_to = None
-    
-    if date_from:
-        try:
-            parsed_date_from = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
-        except:
-            try:
-                parsed_date_from = datetime.strptime(date_from, '%Y-%m-%d')
-            except:
-                pass
-    
-    if date_to:
-        try:
-            parsed_date_to = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
-        except:
-            try:
-                parsed_date_to = datetime.strptime(date_to, '%Y-%m-%d')
-            except:
-                pass
-    
-    # Parse filters
-    sentiment_list = sentiments.split(',') if sentiments else None
-    language_list = languages.split(',') if languages else None
-    
-    # Get filtered feedback
-    feedbacks, stats = service.get_filtered_feedback(
-        date_from=parsed_date_from,
-        date_to=parsed_date_to,
-        sentiments=sentiment_list,
-        languages=language_list
-    )
-    
-    if len(feedbacks) == 0:
-        raise HTTPException(status_code=400, detail="No feedback found matching the selected filters")
-    
-    # Generate report based on type
-    if report_type == 'detailed':
-        # Generate Excel report
-        filepath, file_size = service.generate_excel_report(
-            title=title,
-            feedbacks=feedbacks,
-            stats=stats,
-            date_from=parsed_date_from,
-            date_to=parsed_date_to
-        )
-        file_format = 'excel'
-    else:
-        # Generate PDF report
-        sections = {
-            'executiveSummary': include_executive_summary,
-            'sentimentChart': include_sentiment_chart,
-            'trendChart': include_trend_chart,
-            'statsTable': include_stats_table,
-            'negativeSamples': include_negative_samples
-        }
+    try:
+        logger.info("Creating ReportService...")
+        service = ReportService(db)
+        logger.info("ReportService created successfully")
         
-        filepath, file_size = service.generate_pdf_report(
-            title=title,
-            feedbacks=feedbacks,
-            stats=stats,
+        # Parse dates
+        parsed_date_from = None
+        parsed_date_to = None
+        
+        if date_from:
+            try:
+                parsed_date_from = datetime.fromisoformat(date_from.replace('Z', '+00:00'))
+            except:
+                try:
+                    parsed_date_from = datetime.strptime(date_from, '%Y-%m-%d')
+                except:
+                    pass
+        
+        if date_to:
+            try:
+                parsed_date_to = datetime.fromisoformat(date_to.replace('Z', '+00:00'))
+            except:
+                try:
+                    parsed_date_to = datetime.strptime(date_to, '%Y-%m-%d')
+                except:
+                    pass
+        
+        # Parse filters
+        sentiment_list = sentiments.split(',') if sentiments else None
+        language_list = languages.split(',') if languages else None
+        
+        logger.info("Getting filtered feedback...")
+        # Get filtered feedback
+        feedbacks, stats = service.get_filtered_feedback(
             date_from=parsed_date_from,
             date_to=parsed_date_to,
-            sections=sections,
-            include_logo=include_logo,
-            orientation=orientation
+            sentiments=sentiment_list,
+            languages=language_list
         )
-        file_format = 'pdf'
-    
-    # Save report record to database
-    report = Report(
-        title=title,
-        report_type=report_type,
-        date_range_start=parsed_date_from,
-        date_range_end=parsed_date_to,
-        filters={
-            'sentiments': sentiment_list,
-            'languages': language_list
-        },
-        file_format=file_format,
-        file_path=filepath,
-        file_size=file_size,
-        total_records=stats['total'],
-        positive_count=stats['positive'],
-        negative_count=stats['negative'],
-        neutral_count=stats['neutral'],
-        status=ReportStatus.COMPLETED.value,
-        generated_at=datetime.utcnow(),
-        user_id=current_user.id
-    )
-    
-    db.add(report)
-    db.commit()
-    db.refresh(report)
-    
-    return {
-        'report_id': report.report_id,
-        'title': report.title,
-        'report_type': report_type,
-        'file_format': file_format,
-        'file_size': file_size,
-        'file_size_mb': round(file_size / (1024 * 1024), 2),
-        'total_records': stats['total'],
-        'positive_count': stats['positive'],
-        'negative_count': stats['negative'],
-        'neutral_count': stats['neutral'],
-        'generated_at': report.generated_at.isoformat() if report.generated_at else None,
-        'download_url': f'/api/v1/reports/{report.report_id}/download',
-        'status': 'completed'
-    }
+        logger.info(f"Got {len(feedbacks)} feedbacks")
+        
+        if len(feedbacks) == 0:
+            raise HTTPException(status_code=400, detail="No feedback found matching the selected filters")
+        
+        # Generate report based on type
+        logger.info(f"Generating {report_type} report...")
+        if report_type == 'detailed':
+            # Generate Excel report
+            filepath, file_size = service.generate_excel_report(
+                title=title,
+                feedbacks=feedbacks,
+                stats=stats,
+                date_from=parsed_date_from,
+                date_to=parsed_date_to
+            )
+            file_format = 'excel'
+        else:
+            # Generate PDF report
+            sections = {
+                'executiveSummary': include_executive_summary,
+                'sentimentChart': include_sentiment_chart,
+                'trendChart': include_trend_chart,
+                'statsTable': include_stats_table,
+                'negativeSamples': include_negative_samples,
+                'npsScore': include_nps_score,
+                'topRoutes': include_top_routes
+            }
+            logger.info(f"Sections: {sections}")
+            
+            filepath, file_size = service.generate_pdf_report(
+                title=title,
+                feedbacks=feedbacks,
+                stats=stats,
+                date_from=parsed_date_from,
+                date_to=parsed_date_to,
+                sections=sections,
+                include_logo=include_logo,
+                orientation=orientation
+            )
+            file_format = 'pdf'
+        
+        # Save report record to database
+        report = Report(
+            title=title,
+            report_type=report_type,
+            date_range_start=parsed_date_from,
+            date_range_end=parsed_date_to,
+            filters={
+                'sentiments': sentiment_list,
+                'languages': language_list
+            },
+            file_format=file_format,
+            file_path=filepath,
+            file_size=file_size,
+            total_records=stats['total'],
+            positive_count=stats['positive'],
+            negative_count=stats['negative'],
+            neutral_count=stats['neutral'],
+            status=ReportStatus.COMPLETED.value,
+            generated_at=datetime.utcnow(),
+            user_id=current_user.id
+        )
+        
+        db.add(report)
+        db.commit()
+        db.refresh(report)
+        
+        return {
+            'report_id': report.report_id,
+            'title': report.title,
+            'report_type': report_type,
+            'file_format': file_format,
+            'file_size': file_size,
+            'file_size_mb': round(file_size / (1024 * 1024), 2),
+            'total_records': stats['total'],
+            'positive_count': stats['positive'],
+            'negative_count': stats['negative'],
+            'neutral_count': stats['neutral'],
+            'generated_at': report.generated_at.isoformat() if report.generated_at else None,
+            'download_url': f'/api/v1/reports/{report.report_id}/download',
+            'status': 'completed'
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 
 @router.get("/{report_id}/download")

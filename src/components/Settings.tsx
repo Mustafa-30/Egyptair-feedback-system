@@ -1,36 +1,193 @@
-import { useState } from 'react';
-import { Save, Download, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
-import { feedbackApi, uploadApi, usersApi, ApiError } from '../lib/api';
+import { useState, useEffect } from 'react';
+import { Save, Download, Trash2, AlertTriangle, Loader2, CheckCircle } from 'lucide-react';
+import { feedbackApi, uploadApi, usersApi, ApiError, analyticsApi } from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+
+// Settings storage key
+const SETTINGS_KEY = 'egyptair_settings';
+
+// Default settings
+const DEFAULT_SETTINGS = {
+  defaultDateRange: 'last30',
+  rowsPerPage: 25,
+  language: 'en',
+  timezone: 'Africa/Cairo',
+  emailNotifications: true,
+  processingAlerts: true,
+  weeklySummary: false,
+  autoDelete: false,
+  autoDeleteDays: 365,
+  compactView: false,
+  theme: 'light' as 'light' | 'dark',
+};
+
+// Load settings from localStorage
+const loadSettings = () => {
+  try {
+    const stored = localStorage.getItem(SETTINGS_KEY);
+    if (stored) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
+    }
+  } catch (e) {
+    console.error('Failed to load settings:', e);
+  }
+  return DEFAULT_SETTINGS;
+};
+
+// Save settings to localStorage
+const saveSettings = (settings: typeof DEFAULT_SETTINGS) => {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    return true;
+  } catch (e) {
+    console.error('Failed to save settings:', e);
+    return false;
+  }
+};
 
 export function Settings() {
   const { user } = useAuth();
-  const [settings, setSettings] = useState({
-    defaultDateRange: 'last30',
-    rowsPerPage: 25,
-    language: 'en',
-    timezone: 'Africa/Cairo',
-    emailNotifications: true,
-    processingAlerts: true,
-    weeklySummary: false,
-    autoDelete: false,
-    autoDeleteDays: 365,
-  });
-
+  const [settings, setSettings] = useState(loadSettings);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearingData, setClearingData] = useState(false);
   const [clearConfirmText, setClearConfirmText] = useState('');
+  const [exporting, setExporting] = useState(false);
+  
+  // System stats
+  const [systemStats, setSystemStats] = useState({
+    totalFeedback: 0,
+    databaseSize: '0 KB',
+    lastUpdate: 'Loading...',
+  });
 
-  const handleSave = () => {
-    // Simulate saving
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
-    alert('Settings saved successfully!');
+  // Load system stats on mount
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const stats = await analyticsApi.getStats({ show_all: 'true' });
+        if (stats) {
+          setSystemStats({
+            totalFeedback: stats.total_feedback || 0,
+            databaseSize: formatBytes((stats.total_feedback || 0) * 2048), // Rough estimate
+            lastUpdate: new Date().toLocaleDateString('en-US', { 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric' 
+            }),
+          });
+        }
+      } catch (e) {
+        console.error('Failed to load system stats:', e);
+      }
+    };
+    fetchStats();
+  }, []);
+
+  // Apply theme and compact view to document
+  useEffect(() => {
+    const root = document.documentElement;
+    
+    // Apply theme
+    if (settings.theme === 'dark') {
+      root.classList.add('dark');
+      document.body.classList.add('dark-mode');
+    } else {
+      root.classList.remove('dark');
+      document.body.classList.remove('dark-mode');
+    }
+    
+    // Apply compact view
+    if (settings.compactView) {
+      root.classList.add('compact');
+      document.body.classList.add('compact-mode');
+    } else {
+      root.classList.remove('compact');
+      document.body.classList.remove('compact-mode');
+    }
+  }, [settings.theme, settings.compactView]);
+
+  // Format bytes to human readable
+  const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const handleExportData = () => {
-    alert('Exporting all data... This may take a few minutes.');
+  const handleSave = async () => {
+    setSaving(true);
+    
+    // Save to localStorage
+    const success = saveSettings(settings);
+    
+    // Simulate a brief delay for UX
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    setSaving(false);
+    
+    if (success) {
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } else {
+      alert('Failed to save settings. Please try again.');
+    }
+  };
+
+  const handleExportData = async () => {
+    setExporting(true);
+    try {
+      // Fetch all feedback data
+      const response = await feedbackApi.getAll({ page: 1, page_size: 10000 });
+      const feedbackItems = response.items || [];
+      
+      if (feedbackItems.length === 0) {
+        alert('No feedback data to export.');
+        setExporting(false);
+        return;
+      }
+
+      // Convert to CSV
+      const headers = ['ID', 'Comment', 'Sentiment', 'Rating', 'Route', 'Flight Number', 'Category', 'Source', 'Language', 'Created At'];
+      const csvRows = [headers.join(',')];
+      
+      for (const item of feedbackItems) {
+        const row = [
+          item.id,
+          `"${(item.comment || '').replace(/"/g, '""')}"`,
+          item.sentiment || '',
+          item.rating || '',
+          item.route || '',
+          item.flight_number || '',
+          item.category || '',
+          item.source || '',
+          item.language || '',
+          item.created_at || '',
+        ];
+        csvRows.push(row.join(','));
+      }
+
+      // Create and download file
+      const csvContent = csvRows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `egyptair_feedback_export_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      alert(`Successfully exported ${feedbackItems.length} feedback entries!`);
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Failed to export data. Please try again.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleClearAllData = async () => {
@@ -135,7 +292,6 @@ export function Settings() {
               className="w-full h-10 px-4 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="en">English</option>
-              <option value="ar">العربية (Arabic)</option>
             </select>
           </div>
 
@@ -248,13 +404,23 @@ export function Settings() {
           <div>
             <button
               onClick={handleExportData}
-              className="w-full h-12 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+              disabled={exporting}
+              className="w-full h-12 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Download className="h-5 w-5" />
-              Export All Data
+              {exporting ? (
+                <>
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="h-5 w-5" />
+                  Export All Data
+                </>
+              )}
             </button>
             <p className="text-[#6B7280] mt-2">
-              Download a complete backup of all feedback data in Excel format
+              Download a complete backup of all feedback data in CSV format
             </p>
           </div>
         </div>
@@ -266,61 +432,65 @@ export function Settings() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="text-[#6B7280] mb-1">System Version</div>
-            <div className="text-[#1F2937]">v2.4.1</div>
+            <div className="text-[#1F2937]">v2.5.0</div>
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
-            <div className="text-[#6B7280] mb-1">Last Update</div>
-            <div className="text-[#1F2937]">December 1, 2025</div>
+            <div className="text-[#6B7280] mb-1">Data As Of</div>
+            <div className="text-[#1F2937]">{systemStats.lastUpdate}</div>
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
             <div className="text-[#6B7280] mb-1">Total Feedback Processed</div>
-            <div className="text-[#1F2937]">12,458</div>
+            <div className="text-[#1F2937]">{systemStats.totalFeedback.toLocaleString()}</div>
           </div>
           <div className="p-4 bg-gray-50 rounded-lg">
-            <div className="text-[#6B7280] mb-1">Database Size</div>
-            <div className="text-[#1F2937]">247 MB</div>
+            <div className="text-[#6B7280] mb-1">Estimated Database Size</div>
+            <div className="text-[#1F2937]">{systemStats.databaseSize}</div>
           </div>
         </div>
       </div>
 
-      {/* Appearance (Optional) */}
-      <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200">
-        <h3 className="text-[#1F2937] mb-4">Appearance</h3>
+      {/* Appearance */}
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700">
+        <h3 className="text-[#1F2937] dark:text-white mb-4">Appearance</h3>
         <div className="space-y-3">
           <div>
-            <label className="block mb-2 text-[#1F2937]">Theme</label>
+            <label className="block mb-2 text-[#1F2937] dark:text-gray-200">Theme</label>
             <div className="flex gap-4">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
                   name="theme"
                   value="light"
-                  defaultChecked
+                  checked={settings.theme === 'light'}
+                  onChange={() => setSettings({ ...settings, theme: 'light' })}
                   className="w-4 h-4 text-[#003366]"
                 />
-                <span className="text-[#1F2937]">Light Mode</span>
+                <span className="text-[#1F2937] dark:text-gray-200">Light Mode</span>
               </label>
-              <label className="flex items-center gap-2 cursor-pointer opacity-50 cursor-not-allowed">
+              <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
                   name="theme"
                   value="dark"
-                  disabled
+                  checked={settings.theme === 'dark'}
+                  onChange={() => setSettings({ ...settings, theme: 'dark' })}
                   className="w-4 h-4 text-[#003366]"
                 />
-                <span className="text-[#6B7280]">Dark Mode (Coming Soon)</span>
+                <span className="text-[#1F2937] dark:text-gray-200">Dark Mode</span>
               </label>
             </div>
           </div>
 
-          <label className="flex items-center gap-3 cursor-pointer p-3 hover:bg-gray-50 rounded-md transition-colors">
+          <label className="flex items-center gap-3 cursor-pointer p-3 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors">
             <input
               type="checkbox"
+              checked={settings.compactView}
+              onChange={(e) => setSettings({ ...settings, compactView: e.target.checked })}
               className="w-5 h-5 text-[#003366] border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
             />
             <div className="flex-1">
-              <div className="text-[#1F2937]">Compact View</div>
-              <div className="text-[#6B7280]">Reduce spacing for more content on screen</div>
+              <div className="text-[#1F2937] dark:text-gray-200">Compact View</div>
+              <div className="text-[#6B7280] dark:text-gray-400">Reduce spacing for more content on screen</div>
             </div>
           </label>
         </div>
@@ -361,10 +531,20 @@ export function Settings() {
               </div>
               <button
                 onClick={handleExportData}
-                className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors flex items-center gap-2 whitespace-nowrap"
+                disabled={exporting}
+                className="px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors flex items-center gap-2 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Download className="h-4 w-4" />
-                Export Data
+                {exporting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <Download className="h-4 w-4" />
+                    Export Data
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -444,19 +624,27 @@ export function Settings() {
           <div>
             {saved && (
               <span className="text-green-600 flex items-center gap-2">
-                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
+                <CheckCircle className="h-5 w-5" />
                 Settings saved successfully
               </span>
             )}
           </div>
           <button
             onClick={handleSave}
-            className="px-8 py-3 bg-[#003366] text-white rounded-md hover:bg-[#C5A572] transition-colors flex items-center gap-2"
+            disabled={saving}
+            className="px-8 py-3 bg-[#003366] text-white rounded-md hover:bg-[#C5A572] transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Save className="h-5 w-5" />
-            Save Changes
+            {saving ? (
+              <>
+                <Loader2 className="h-5 w-5 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="h-5 w-5" />
+                Save Changes
+              </>
+            )}
           </button>
         </div>
       </div>

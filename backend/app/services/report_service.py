@@ -19,6 +19,10 @@ from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+import arabic_reshaper
+from bidi.algorithm import get_display
 
 # Charts
 import matplotlib
@@ -38,6 +42,49 @@ from app.models.feedback import Feedback
 from app.models.report import Report, ReportStatus
 
 
+# Register Arabic font
+def register_arabic_font():
+    """Register an Arabic-compatible font for PDF generation"""
+    try:
+        # Try common system fonts that support Arabic
+        font_paths = [
+            # Windows fonts
+            "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/tahoma.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+            # Linux fonts
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        ]
+        
+        for font_path in font_paths:
+            if os.path.exists(font_path):
+                pdfmetrics.registerFont(TTFont('Arabic', font_path))
+                return 'Arabic'
+        
+        # Fallback to Helvetica if no Arabic font found
+        return 'Helvetica'
+    except Exception:
+        return 'Helvetica'
+
+
+def reshape_arabic_text(text: str) -> str:
+    """Reshape Arabic text for proper display in PDF"""
+    if not text:
+        return text
+    
+    try:
+        # Check if text contains Arabic characters
+        has_arabic = any('\u0600' <= c <= '\u06FF' or '\u0750' <= c <= '\u077F' for c in text)
+        
+        if has_arabic:
+            reshaped = arabic_reshaper.reshape(text)
+            return get_display(reshaped)
+        return text
+    except Exception:
+        return text
+
+
 class ReportService:
     """Service for generating comprehensive feedback reports"""
     
@@ -45,6 +92,7 @@ class ReportService:
         self.db = db
         self.reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'reports')
         os.makedirs(self.reports_dir, exist_ok=True)
+        self.arabic_font = register_arabic_font()
     
     def get_filtered_feedback(
         self,
@@ -90,6 +138,7 @@ class ReportService:
         
         ar_count = sum(1 for f in feedbacks if f.language == 'AR')
         en_count = sum(1 for f in feedbacks if f.language == 'EN')
+        mixed_count = sum(1 for f in feedbacks if f.language == 'Mixed')
         
         stats = {
             'total': total,
@@ -101,6 +150,7 @@ class ReportService:
             'neutral_pct': round(neutral / total * 100, 1) if total > 0 else 0,
             'arabic_count': ar_count,
             'english_count': en_count,
+            'mixed_count': mixed_count,
             'avg_confidence': round(sum(f.sentiment_confidence or 0 for f in feedbacks) / total, 2) if total > 0 else 0,
         }
         
@@ -151,6 +201,94 @@ class ReportService:
             }
             for f in negative_feedbacks[:limit]
         ]
+    
+    def calculate_nps(self, stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Calculate Net Promoter Score (NPS) based on sentiment distribution.
+        
+        NPS Mapping:
+        - Positive sentiment → Promoters (9-10)
+        - Neutral sentiment → Passives (7-8)
+        - Negative sentiment → Detractors (0-6)
+        
+        NPS = % Promoters - % Detractors (range: -100 to +100)
+        """
+        total = stats['total']
+        if total == 0:
+            return {
+                'nps_score': 0,
+                'grade': 'N/A',
+                'promoter_pct': 0,
+                'passive_pct': 0,
+                'detractor_pct': 0
+            }
+        
+        promoter_pct = round((stats['positive'] / total) * 100, 1)
+        passive_pct = round((stats['neutral'] / total) * 100, 1)
+        detractor_pct = round((stats['negative'] / total) * 100, 1)
+        
+        nps_score = round(promoter_pct - detractor_pct)
+        
+        # NPS Grade
+        if nps_score >= 70:
+            grade = 'Excellent'
+        elif nps_score >= 50:
+            grade = 'Great'
+        elif nps_score >= 30:
+            grade = 'Good'
+        elif nps_score >= 0:
+            grade = 'Needs Improvement'
+        else:
+            grade = 'Critical'
+        
+        return {
+            'nps_score': nps_score,
+            'grade': grade,
+            'promoter_pct': promoter_pct,
+            'passive_pct': passive_pct,
+            'detractor_pct': detractor_pct
+        }
+    
+    def get_top_routes(self, feedbacks: List[Feedback], limit: int = 5) -> List[Dict]:
+        """
+        Get top routes with Wilson Score ranking for statistical confidence
+        """
+        from math import sqrt
+        
+        route_data = defaultdict(lambda: {'positive': 0, 'negative': 0, 'neutral': 0, 'total': 0})
+        
+        for f in feedbacks:
+            # Use flight_number as route identifier
+            route = f.flight_number or 'Unknown'
+            if route == 'Unknown':
+                continue  # Skip feedbacks without flight numbers
+            route_data[route][f.sentiment or 'neutral'] += 1
+            route_data[route]['total'] += 1
+        
+        # Calculate Wilson Score for each route
+        routes_with_scores = []
+        for route, data in route_data.items():
+            if data['total'] >= 5:  # Minimum sample size
+                n = data['total']
+                p = data['positive'] / n
+                z = 1.96  # 95% confidence
+                
+                # Wilson Score lower bound
+                wilson_score = (p + z*z/(2*n) - z * sqrt((p*(1-p) + z*z/(4*n))/n)) / (1 + z*z/n)
+                
+                routes_with_scores.append({
+                    'route': route,
+                    'positive': data['positive'],
+                    'negative': data['negative'],
+                    'neutral': data['neutral'],
+                    'total': data['total'],
+                    'positive_rate': round(p * 100, 1),
+                    'wilson_score': round(wilson_score * 100, 1)
+                })
+        
+        # Sort by Wilson Score
+        routes_with_scores.sort(key=lambda x: x['wilson_score'], reverse=True)
+        return routes_with_scores[:limit]
     
     def create_sentiment_chart(self, stats: Dict[str, Any], width: int = 400, height: int = 300) -> bytes:
         """
@@ -224,9 +362,14 @@ class ReportService:
         """
         fig, ax = plt.subplots(figsize=(width/100, height/100), dpi=100)
         
-        languages = ['Arabic', 'English']
-        counts = [stats['arabic_count'], stats['english_count']]
-        colors_list = ['#003366', '#C5A572']
+        languages = ['Arabic', 'English', 'Mixed']
+        counts = [stats['arabic_count'], stats['english_count'], stats.get('mixed_count', 0)]
+        colors_list = ['#003366', '#C5A572', '#14B8A6']
+        
+        # Only show languages with non-zero counts
+        non_zero = [(l, c, col) for l, c, col in zip(languages, counts, colors_list) if c > 0]
+        if non_zero:
+            languages, counts, colors_list = zip(*non_zero)
         
         bars = ax.bar(languages, counts, color=colors_list)
         ax.set_ylabel('Count')
@@ -356,6 +499,90 @@ class ReportService:
             story.append(table)
             story.append(Spacer(1, 20))
         
+        # NPS Score Section
+        if sections.get('npsScore', True):
+            story.append(Paragraph("Net Promoter Score (NPS)", heading_style))
+            
+            nps_data = self.calculate_nps(stats)
+            
+            # NPS score color based on grade
+            nps_color = colors.HexColor('#22C55E')  # Green
+            if nps_data['nps_score'] < 0:
+                nps_color = colors.HexColor('#EF4444')  # Red
+            elif nps_data['nps_score'] < 30:
+                nps_color = colors.HexColor('#F59E0B')  # Orange
+            elif nps_data['nps_score'] < 50:
+                nps_color = colors.HexColor('#3B82F6')  # Blue
+            
+            nps_table_data = [
+                ['NPS Score', 'Grade', 'Promoters', 'Passives', 'Detractors'],
+                [str(nps_data['nps_score']), nps_data['grade'], 
+                 f"{nps_data['promoter_pct']}%", f"{nps_data['passive_pct']}%", f"{nps_data['detractor_pct']}%"],
+            ]
+            
+            nps_table = Table(nps_table_data, colWidths=[1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch])
+            nps_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('FONTSIZE', (0, 1), (-1, -1), 12),
+                ('FONTNAME', (0, 1), (0, 1), 'Helvetica-Bold'),
+                ('TEXTCOLOR', (0, 1), (0, 1), nps_color),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E5E7EB')),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ]))
+            story.append(nps_table)
+            
+            # NPS explanation
+            nps_explanation = """
+            <i>NPS is calculated as: % Promoters - % Detractors. 
+            Scores range from -100 to +100. Scores above 50 are considered excellent.</i>
+            """
+            story.append(Spacer(1, 8))
+            story.append(Paragraph(nps_explanation, ParagraphStyle('NPSNote', parent=normal_style, fontSize=9, textColor=colors.gray)))
+            story.append(Spacer(1, 20))
+        
+        # Top Routes Section
+        if sections.get('topRoutes', True):
+            story.append(Paragraph("Top Performing Routes", heading_style))
+            
+            top_routes = self.get_top_routes(feedbacks, limit=5)
+            
+            if top_routes:
+                routes_table_data = [['Route', 'Total', 'Positive Rate', 'Wilson Score', 'Confidence']]
+                
+                for route in top_routes:
+                    confidence = 'High' if route['total'] >= 50 else 'Medium' if route['total'] >= 20 else 'Low'
+                    routes_table_data.append([
+                        route['route'],
+                        str(route['total']),
+                        f"{route['positive_rate']}%",
+                        f"{route['wilson_score']}%",
+                        confidence
+                    ])
+                
+                routes_table = Table(routes_table_data, colWidths=[1.8*inch, 0.8*inch, 1.2*inch, 1.2*inch, 1.2*inch])
+                routes_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 11),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E5E7EB')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F5F7FA')]),
+                ]))
+                story.append(routes_table)
+                story.append(Spacer(1, 8))
+                story.append(Paragraph("<i>Routes ranked by Wilson Score (statistical confidence of positive rate)</i>", 
+                    ParagraphStyle('RouteNote', parent=normal_style, fontSize=9, textColor=colors.gray)))
+            else:
+                story.append(Paragraph("Insufficient route data available (minimum 5 feedbacks per route required).", normal_style))
+            story.append(Spacer(1, 20))
+        
         # Sentiment Distribution Chart
         if sections.get('sentimentChart', True):
             story.append(Paragraph("Sentiment Distribution", heading_style))
@@ -382,12 +609,15 @@ class ReportService:
         if sections.get('statsTable', True):
             story.append(Paragraph("Detailed Statistics", heading_style))
             
+            total = stats['total'] or 1
             stats_data = [
                 ['Category', 'Count', 'Percentage'],
                 ['Arabic Feedback', str(stats['arabic_count']), 
-                 f"{round(stats['arabic_count']/stats['total']*100, 1) if stats['total'] > 0 else 0}%"],
+                 f"{round(stats['arabic_count']/total*100, 1)}%"],
                 ['English Feedback', str(stats['english_count']), 
-                 f"{round(stats['english_count']/stats['total']*100, 1) if stats['total'] > 0 else 0}%"],
+                 f"{round(stats['english_count']/total*100, 1)}%"],
+                ['Mixed Feedback', str(stats.get('mixed_count', 0)), 
+                 f"{round(stats.get('mixed_count', 0)/total*100, 1)}%"],
             ]
             
             stats_table = Table(stats_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
@@ -411,9 +641,21 @@ class ReportService:
             negative_samples = self.get_top_negative_feedback(feedbacks, limit=10)
             
             if negative_samples:
+                # Create Arabic-compatible style
+                arabic_style = ParagraphStyle(
+                    'ArabicNormal',
+                    parent=normal_style,
+                    fontName=self.arabic_font,
+                    fontSize=11,
+                    spaceAfter=6,
+                    wordWrap='RTL' if self.arabic_font == 'Arabic' else 'LTR'
+                )
+                
                 for i, sample in enumerate(negative_samples, 1):
-                    sample_text = f"<b>{i}.</b> [{sample['date']}] {sample['text']}"
-                    story.append(Paragraph(sample_text, normal_style))
+                    # Reshape Arabic text if present
+                    display_text = reshape_arabic_text(sample['text'])
+                    sample_text = f"<b>{i}.</b> [{sample['date']}] {display_text}"
+                    story.append(Paragraph(sample_text, arabic_style))
                     story.append(Paragraph(
                         f"<i>Flight: {sample['flight']} | Customer: {sample['customer']} | Confidence: {sample['confidence']:.2f}</i>",
                         ParagraphStyle('Small', parent=normal_style, fontSize=9, textColor=colors.gray)
@@ -481,6 +723,7 @@ class ReportService:
             ('Neutral Feedback', stats['neutral'], f"{stats['neutral_pct']}%"),
             ('Arabic Feedback', stats['arabic_count'], f"{round(stats['arabic_count']/max(stats['total'],1)*100, 1)}%"),
             ('English Feedback', stats['english_count'], f"{round(stats['english_count']/max(stats['total'],1)*100, 1)}%"),
+            ('Mixed Feedback', stats.get('mixed_count', 0), f"{round(stats.get('mixed_count', 0)/max(stats['total'],1)*100, 1)}%"),
             ('Average Confidence', f"{stats['avg_confidence']:.2f}", '-'),
         ]
         
@@ -488,6 +731,31 @@ class ReportService:
             ws_summary.cell(row=row_idx, column=1, value=metric)
             ws_summary.cell(row=row_idx, column=2, value=value)
             ws_summary.cell(row=row_idx, column=3, value=pct)
+        
+        # NPS Section
+        nps_start_row = summary_start_row + len(summary_data) + 3
+        nps_data = self.calculate_nps(stats)
+        
+        ws_summary.cell(row=nps_start_row, column=1, value="Net Promoter Score (NPS)")
+        ws_summary.cell(row=nps_start_row, column=1).font = Font(bold=True, size=12, color="003366")
+        
+        nps_headers = ['Metric', 'Value']
+        for col, header in enumerate(nps_headers, 1):
+            cell = ws_summary.cell(row=nps_start_row + 1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+        
+        nps_rows = [
+            ('NPS Score', nps_data['nps_score']),
+            ('Grade', nps_data['grade']),
+            ('Promoters', f"{nps_data['promoter_pct']}%"),
+            ('Passives', f"{nps_data['passive_pct']}%"),
+            ('Detractors', f"{nps_data['detractor_pct']}%"),
+        ]
+        
+        for row_idx, (metric, value) in enumerate(nps_rows, nps_start_row + 2):
+            ws_summary.cell(row=row_idx, column=1, value=metric)
+            ws_summary.cell(row=row_idx, column=2, value=value)
         
         # Adjust column widths
         ws_summary.column_dimensions['A'].width = 25

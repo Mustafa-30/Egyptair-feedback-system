@@ -77,10 +77,11 @@ function CSATGauge({ score, grade, change }: { score: number; grade: string; cha
 }
 
 // Language Progress Bars Component
-function LanguageProgressBars({ arabic, english }: { arabic: number; english: number }) {
-  const total = arabic + english || 1;
+function LanguageProgressBars({ arabic, english, mixed = 0 }: { arabic: number; english: number; mixed?: number }) {
+  const total = arabic + english + mixed || 1;
   const arabicPct = Math.round((arabic / total) * 100);
   const englishPct = Math.round((english / total) * 100);
+  const mixedPct = Math.round((mixed / total) * 100);
   
   return (
     <div className="space-y-4 p-4">
@@ -114,6 +115,23 @@ function LanguageProgressBars({ arabic, english }: { arabic: number; english: nu
           <div className="h-3 rounded-full bg-gradient-to-r from-purple-400 to-purple-600 transition-all duration-500" style={{ width: `${englishPct}%` }} />
         </div>
       </div>
+      {mixed > 0 && (
+        <div>
+          <div className="flex justify-between items-center mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🌐</span>
+              <span className="font-medium text-gray-700">Mixed</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">{mixed.toLocaleString()}</span>
+              <span className="text-sm font-medium text-teal-600">{mixedPct}%</span>
+            </div>
+          </div>
+          <div className="w-full bg-gray-200 rounded-full h-3">
+            <div className="h-3 rounded-full bg-gradient-to-r from-teal-400 to-teal-600 transition-all duration-500" style={{ width: `${mixedPct}%` }} />
+          </div>
+        </div>
+      )}
       <div className="pt-3 border-t border-gray-200">
         <div className="flex justify-between items-center">
           <span className="text-sm text-gray-500">Total Feedback</span>
@@ -1642,6 +1660,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <LanguageProgressBars 
                 arabic={stats?.language_distribution?.arabic || 0}
                 english={stats?.language_distribution?.english || 0}
+                mixed={stats?.language_distribution?.mixed || 0}
               />
             </div>
 

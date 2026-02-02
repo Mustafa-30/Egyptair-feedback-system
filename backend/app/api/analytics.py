@@ -140,6 +140,7 @@ async def get_dashboard_stats(
     language_dict = {l[0]: l[1] for l in language_counts if l[0]}
     arabic_count = language_dict.get("AR", 0)
     english_count = language_dict.get("EN", 0)
+    mixed_count = language_dict.get("Mixed", 0)
     
     # Priority distribution
     priority_counts = db.query(
@@ -169,7 +170,8 @@ async def get_dashboard_stats(
         "language_distribution": {
             "arabic": arabic_count,
             "english": english_count,
-            "total": arabic_count + english_count
+            "mixed": mixed_count,
+            "total": arabic_count + english_count + mixed_count
         },
         "priority_distribution": {
             "high": priority_dict.get("high", 0),

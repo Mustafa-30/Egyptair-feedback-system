@@ -130,6 +130,11 @@ export function Settings() {
     // Save to localStorage
     const success = saveSettings(settings);
     
+    // Dispatch custom event so Dashboard can react to settings change
+    if (success) {
+      window.dispatchEvent(new CustomEvent('settings:updated', { detail: settings }));
+    }
+    
     // Simulate a brief delay for UX
     await new Promise(resolve => setTimeout(resolve, 500));
     

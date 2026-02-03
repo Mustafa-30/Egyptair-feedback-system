@@ -20,7 +20,7 @@ from app.schemas.report import (
     ReportListResponse,
     ReportSummary,
 )
-from app.services.report_service import ReportService
+from app.services.report_service import ReportService, AnalyticsSettings
 
 router = APIRouter()
 
@@ -163,8 +163,14 @@ async def generate_report(
     include_negative_samples: bool = Query(True),
     include_nps_score: bool = Query(True),
     include_top_routes: bool = Query(True),
+    include_csat_score: bool = Query(True),
+    include_monthly_nps_trend: bool = Query(True),
+    include_complaint_categories: bool = Query(True),
     include_logo: bool = Query(True),
     orientation: str = Query("portrait", description="portrait or landscape"),
+    nps_target: int = Query(50, description="NPS target score"),
+    csat_threshold: int = Query(80, description="CSAT threshold percentage"),
+    min_reviews_per_route: int = Query(10, description="Minimum reviews for route ranking"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -179,8 +185,14 @@ async def generate_report(
     
     try:
         logger.info("Creating ReportService...")
-        service = ReportService(db)
-        logger.info("ReportService created successfully")
+        # Create analytics settings from query parameters
+        analytics_settings = AnalyticsSettings(
+            nps_target=nps_target,
+            csat_threshold=csat_threshold,
+            min_reviews_per_route=min_reviews_per_route
+        )
+        service = ReportService(db, analytics_settings=analytics_settings)
+        logger.info(f"ReportService created with settings: NPS target={nps_target}, CSAT threshold={csat_threshold}, Min reviews={min_reviews_per_route}")
         
         # Parse dates
         parsed_date_from = None
@@ -242,7 +254,10 @@ async def generate_report(
                 'statsTable': include_stats_table,
                 'negativeSamples': include_negative_samples,
                 'npsScore': include_nps_score,
-                'topRoutes': include_top_routes
+                'topRoutes': include_top_routes,
+                'csatScore': include_csat_score,
+                'monthlyNpsTrend': include_monthly_nps_trend,
+                'complaintCategories': include_complaint_categories
             }
             logger.info(f"Sections: {sections}")
             

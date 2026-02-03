@@ -1,13 +1,17 @@
 """
 Report Generation Service
 Generates PDF and Excel reports with charts and statistics
+Aligned with dashboard analytics, filters, and system settings
 """
 import os
 import io
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
+from dataclasses import dataclass
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, extract
+from collections import Counter, defaultdict
+from math import sqrt
 
 # PDF Generation
 from reportlab.lib import colors
@@ -29,7 +33,6 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from collections import Counter, defaultdict
 
 # Excel Generation
 import pandas as pd
@@ -40,6 +43,25 @@ from openpyxl.chart import PieChart, BarChart, LineChart, Reference
 
 from app.models.feedback import Feedback
 from app.models.report import Report, ReportStatus
+
+
+@dataclass
+class AnalyticsSettings:
+    """Analytics settings that control report calculations"""
+    nps_target: int = 50
+    csat_threshold: int = 80
+    min_reviews_per_route: int = 10
+    
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]] = None) -> 'AnalyticsSettings':
+        """Create settings from a dictionary"""
+        if not data:
+            return cls()
+        return cls(
+            nps_target=data.get('nps_target', 50),
+            csat_threshold=data.get('csat_threshold', 80),
+            min_reviews_per_route=data.get('min_reviews_per_route', 10)
+        )
 
 
 # Register Arabic font
@@ -86,13 +108,71 @@ def reshape_arabic_text(text: str) -> str:
 
 
 class ReportService:
-    """Service for generating comprehensive feedback reports"""
+    """Service for generating comprehensive feedback reports aligned with dashboard analytics"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, analytics_settings: Optional[AnalyticsSettings] = None):
         self.db = db
         self.reports_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'reports')
         os.makedirs(self.reports_dir, exist_ok=True)
         self.arabic_font = register_arabic_font()
+        self.settings = analytics_settings or AnalyticsSettings()
+    
+    def validate_data_availability(self, feedbacks: List[Feedback], stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate that sufficient data is available for report generation.
+        Returns validation result with warnings for missing data.
+        """
+        validation = {
+            'is_valid': True,
+            'warnings': [],
+            'errors': [],
+            'available_sections': []
+        }
+        
+        total = stats.get('total', 0)
+        
+        # Critical: Must have at least some feedback
+        if total == 0:
+            validation['is_valid'] = False
+            validation['errors'].append('No feedback data matches the selected filters')
+            return validation
+        
+        # Check for sentiment data
+        if stats.get('positive', 0) + stats.get('negative', 0) + stats.get('neutral', 0) == 0:
+            validation['warnings'].append('No sentiment data available - NPS and CSAT cannot be calculated')
+        else:
+            validation['available_sections'].extend(['sentiment_overview', 'nps', 'csat'])
+        
+        # Check for trend data (need at least 2 different dates)
+        dates = set(f.feedback_date.strftime('%Y-%m-%d') for f in feedbacks if f.feedback_date)
+        if len(dates) < 2:
+            validation['warnings'].append('Insufficient date range for trend analysis (need at least 2 dates)')
+        else:
+            validation['available_sections'].append('trend_analysis')
+        
+        # Check for route data
+        routes_with_min_reviews = sum(1 for _ in self._get_route_counts(feedbacks) 
+                                       if _ >= self.settings.min_reviews_per_route)
+        if routes_with_min_reviews == 0:
+            validation['warnings'].append(
+                f'No routes meet minimum review requirement ({self.settings.min_reviews_per_route} reviews)'
+            )
+        else:
+            validation['available_sections'].append('route_performance')
+        
+        # Check for language distribution
+        if stats.get('arabic_count', 0) + stats.get('english_count', 0) > 0:
+            validation['available_sections'].append('language_distribution')
+        
+        return validation
+    
+    def _get_route_counts(self, feedbacks: List[Feedback]) -> List[int]:
+        """Helper to get counts of feedback per route"""
+        route_counts = defaultdict(int)
+        for f in feedbacks:
+            if f.flight_number:
+                route_counts[f.flight_number] += 1
+        return list(route_counts.values())
     
     def get_filtered_feedback(
         self,
@@ -241,20 +321,152 @@ class ReportService:
         else:
             grade = 'Critical'
         
+        # Compare with target
+        target = self.settings.nps_target
+        vs_target = nps_score - target
+        meets_target = nps_score >= target
+        
         return {
             'nps_score': nps_score,
             'grade': grade,
             'promoter_pct': promoter_pct,
             'passive_pct': passive_pct,
-            'detractor_pct': detractor_pct
+            'detractor_pct': detractor_pct,
+            'target': target,
+            'vs_target': vs_target,
+            'meets_target': meets_target
         }
+    
+    def calculate_csat(self, stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Calculate Customer Satisfaction Score (CSAT).
+        
+        CSAT = Positive / Total * 100 (matching dashboard calculation)
+        Using configurable threshold from analytics settings.
+        """
+        total = stats['total']
+        if total == 0:
+            return {
+                'csat_score': 0,
+                'threshold': self.settings.csat_threshold,
+                'meets_threshold': False,
+                'satisfied_count': 0,
+                'unsatisfied_count': 0,
+                'status': 'N/A'
+            }
+        
+        # Satisfied = Positive only (matching dashboard calculation)
+        satisfied_count = stats['positive']
+        unsatisfied_count = stats['negative']
+        csat_score = round((satisfied_count / total) * 100, 1)
+        
+        threshold = self.settings.csat_threshold
+        meets_threshold = csat_score >= threshold
+        
+        # Status based on CSAT score
+        if csat_score >= 90:
+            status = 'Excellent'
+        elif csat_score >= 80:
+            status = 'Good'
+        elif csat_score >= 70:
+            status = 'Fair'
+        elif csat_score >= 60:
+            status = 'Needs Improvement'
+        else:
+            status = 'Critical'
+        
+        return {
+            'csat_score': csat_score,
+            'threshold': threshold,
+            'meets_threshold': meets_threshold,
+            'satisfied_count': satisfied_count,
+            'unsatisfied_count': unsatisfied_count,
+            'status': status
+        }
+    
+    def get_monthly_nps(self, feedbacks: List[Feedback]) -> List[Dict[str, Any]]:
+        """
+        Calculate NPS grouped by month for trend analysis.
+        Returns list of monthly NPS data sorted by date.
+        """
+        monthly_data = defaultdict(lambda: {'positive': 0, 'negative': 0, 'neutral': 0, 'total': 0})
+        
+        for f in feedbacks:
+            if f.feedback_date:
+                month_key = f.feedback_date.strftime('%Y-%m')
+                sentiment = f.sentiment or 'neutral'
+                monthly_data[month_key][sentiment] += 1
+                monthly_data[month_key]['total'] += 1
+        
+        results = []
+        for month, data in sorted(monthly_data.items()):
+            total = data['total']
+            if total > 0:
+                promoter_pct = (data['positive'] / total) * 100
+                detractor_pct = (data['negative'] / total) * 100
+                nps_score = round(promoter_pct - detractor_pct)
+                
+                results.append({
+                    'month': month,
+                    'month_display': datetime.strptime(month, '%Y-%m').strftime('%b %Y'),
+                    'nps_score': nps_score,
+                    'total': total,
+                    'positive': data['positive'],
+                    'negative': data['negative'],
+                    'neutral': data['neutral'],
+                    'meets_target': nps_score >= self.settings.nps_target
+                })
+        
+        return results
+    
+    def get_complaint_categories(self, feedbacks: List[Feedback], limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Extract and rank top complaint categories from negative feedback.
+        Analyzes feedback text using keyword detection.
+        """
+        keyword_counts = Counter()
+        
+        # Common complaint keywords for detection
+        complaint_keywords = {
+            'delay': ['delay', 'late', 'wait', 'waiting', 'delayed', 'تأخير', 'متأخر'],
+            'baggage': ['baggage', 'luggage', 'bag', 'bags', 'lost', 'حقيبة', 'أمتعة'],
+            'service': ['service', 'staff', 'crew', 'rude', 'unfriendly', 'خدمة', 'طاقم'],
+            'food': ['food', 'meal', 'catering', 'hungry', 'طعام', 'وجبة'],
+            'seating': ['seat', 'seating', 'cramped', 'uncomfortable', 'مقعد', 'جلوس'],
+            'booking': ['booking', 'reservation', 'ticket', 'cancel', 'حجز', 'تذكرة'],
+            'refund': ['refund', 'money', 'compensation', 'payment', 'استرداد', 'مال'],
+            'cleanliness': ['clean', 'dirty', 'hygiene', 'sanitary', 'نظافة', 'قذر'],
+            'entertainment': ['entertainment', 'screen', 'wifi', 'internet', 'ترفيه', 'شاشة'],
+            'check-in': ['check-in', 'checkin', 'counter', 'airport', 'تسجيل', 'مطار']
+        }
+        
+        negative_feedbacks = [f for f in feedbacks if f.sentiment == 'negative']
+        
+        for f in negative_feedbacks:
+            # Analyze text for keywords to detect complaint categories
+            if f.text:
+                text_lower = f.text.lower()
+                for category, keywords in complaint_keywords.items():
+                    if any(kw in text_lower for kw in keywords):
+                        keyword_counts[category] += 1
+        
+        total_negative = len(negative_feedbacks) or 1
+        
+        results = []
+        for category, count in keyword_counts.most_common(limit):
+            results.append({
+                'category': category.title(),
+                'count': count,
+                'percentage': round((count / total_negative) * 100, 1)
+            })
+        
+        return results
     
     def get_top_routes(self, feedbacks: List[Feedback], limit: int = 5) -> List[Dict]:
         """
-        Get top routes with Wilson Score ranking for statistical confidence
+        Get top routes with Wilson Score ranking for statistical confidence.
+        Uses min_reviews_per_route from analytics settings.
         """
-        from math import sqrt
-        
         route_data = defaultdict(lambda: {'positive': 0, 'negative': 0, 'neutral': 0, 'total': 0})
         
         for f in feedbacks:
@@ -265,16 +477,32 @@ class ReportService:
             route_data[route][f.sentiment or 'neutral'] += 1
             route_data[route]['total'] += 1
         
+        # Use configurable minimum sample size from settings
+        min_reviews = self.settings.min_reviews_per_route
+        
         # Calculate Wilson Score for each route
         routes_with_scores = []
         for route, data in route_data.items():
-            if data['total'] >= 5:  # Minimum sample size
+            if data['total'] >= min_reviews:
                 n = data['total']
                 p = data['positive'] / n
                 z = 1.96  # 95% confidence
                 
                 # Wilson Score lower bound
                 wilson_score = (p + z*z/(2*n) - z * sqrt((p*(1-p) + z*z/(4*n))/n)) / (1 + z*z/n)
+                
+                # Calculate average sentiment score (-1 to +1)
+                sentiment_score = ((data['positive'] - data['negative']) / n)
+                
+                # Determine confidence level based on sample size
+                if n >= 100:
+                    confidence_level = 'Very High'
+                elif n >= 50:
+                    confidence_level = 'High'
+                elif n >= 20:
+                    confidence_level = 'Medium'
+                else:
+                    confidence_level = 'Low'
                 
                 routes_with_scores.append({
                     'route': route,
@@ -283,7 +511,9 @@ class ReportService:
                     'neutral': data['neutral'],
                     'total': data['total'],
                     'positive_rate': round(p * 100, 1),
-                    'wilson_score': round(wilson_score * 100, 1)
+                    'wilson_score': round(wilson_score * 100, 1),
+                    'sentiment_score': round(sentiment_score * 100, 1),
+                    'confidence_level': confidence_level
                 })
         
         # Sort by Wilson Score
@@ -379,6 +609,55 @@ class ReportService:
         for bar, count in zip(bars, counts):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.5, 
                    str(count), ha='center', va='bottom')
+        
+        plt.tight_layout()
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+        plt.close()
+        buf.seek(0)
+        return buf.getvalue()
+    
+    def create_monthly_nps_chart(self, monthly_data: List[Dict], width: int = 600, height: int = 300) -> bytes:
+        """
+        Create a line chart showing monthly NPS trend with target line.
+        """
+        fig, ax = plt.subplots(figsize=(width/100, height/100), dpi=100)
+        
+        months = [m['month_display'] for m in monthly_data]
+        nps_scores = [m['nps_score'] for m in monthly_data]
+        target = self.settings.nps_target
+        
+        # NPS Score line
+        ax.plot(range(len(months)), nps_scores, 'b-', label='NPS Score', linewidth=2, marker='o', markersize=6)
+        
+        # Target line
+        ax.axhline(y=target, color='#22C55E', linestyle='--', linewidth=1.5, label=f'Target ({target})')
+        
+        # Color points based on whether they meet target
+        for i, (score, meets) in enumerate(zip(nps_scores, [m['meets_target'] for m in monthly_data])):
+            color = '#22C55E' if meets else '#EF4444'
+            ax.scatter(i, score, color=color, s=80, zorder=5)
+        
+        ax.set_xlabel('Month')
+        ax.set_ylabel('NPS Score')
+        ax.set_title('Monthly NPS Trend', fontsize=14, fontweight='bold')
+        ax.legend(loc='upper left')
+        ax.grid(True, alpha=0.3)
+        
+        # Set y-axis range
+        min_score = min(nps_scores) if nps_scores else 0
+        max_score = max(nps_scores) if nps_scores else 100
+        ax.set_ylim(min(min_score - 10, -10), max(max_score + 10, target + 20))
+        
+        # Set x-axis labels
+        ax.set_xticks(range(len(months)))
+        ax.set_xticklabels(months, rotation=45, ha='right')
+        
+        # Add score labels
+        for i, score in enumerate(nps_scores):
+            ax.annotate(str(score), (i, score), textcoords="offset points", 
+                       xytext=(0, 10), ha='center', fontsize=9)
         
         plt.tight_layout()
         
@@ -536,6 +815,13 @@ class ReportService:
             ]))
             story.append(nps_table)
             
+            # NPS Target comparison
+            target_text = f"Target: {nps_data['target']} | Status: {nps_data['vs_target']}"
+            target_color = colors.HexColor('#22C55E') if nps_data['meets_target'] else colors.HexColor('#EF4444')
+            story.append(Spacer(1, 8))
+            story.append(Paragraph(f"<b>{target_text}</b>", 
+                ParagraphStyle('NPSTarget', parent=normal_style, fontSize=10, textColor=target_color)))
+            
             # NPS explanation
             nps_explanation = """
             <i>NPS is calculated as: % Promoters - % Detractors. 
@@ -543,6 +829,120 @@ class ReportService:
             """
             story.append(Spacer(1, 8))
             story.append(Paragraph(nps_explanation, ParagraphStyle('NPSNote', parent=normal_style, fontSize=9, textColor=colors.gray)))
+            story.append(Spacer(1, 20))
+        
+        # CSAT Score Section
+        if sections.get('csatScore', True):
+            story.append(Paragraph("Customer Satisfaction (CSAT)", heading_style))
+            
+            csat_data = self.calculate_csat(stats)
+            
+            # CSAT score color based on threshold
+            csat_color = colors.HexColor('#22C55E') if csat_data['meets_threshold'] else colors.HexColor('#EF4444')
+            
+            csat_table_data = [
+                ['CSAT Score', 'Status', 'Threshold', 'Satisfied', 'Unsatisfied'],
+                [f"{csat_data['csat_score']}%", csat_data['status'], 
+                 f"{csat_data['threshold']}%", str(csat_data['satisfied_count']), str(csat_data['unsatisfied_count'])],
+            ]
+            
+            csat_table = Table(csat_table_data, colWidths=[1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch, 1.3*inch])
+            csat_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 11),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('FONTSIZE', (0, 1), (-1, -1), 12),
+                ('FONTNAME', (0, 1), (0, 1), 'Helvetica-Bold'),
+                ('TEXTCOLOR', (0, 1), (0, 1), csat_color),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E5E7EB')),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ]))
+            story.append(csat_table)
+            
+            csat_explanation = f"""
+            <i>CSAT measures customer satisfaction as % of positive feedback.
+            Current threshold is set to {csat_data['threshold']}%.</i>
+            """
+            story.append(Spacer(1, 8))
+            story.append(Paragraph(csat_explanation, ParagraphStyle('CSATNote', parent=normal_style, fontSize=9, textColor=colors.gray)))
+            story.append(Spacer(1, 20))
+        
+        # Monthly NPS Trend Section
+        if sections.get('monthlyNpsTrend', True):
+            story.append(Paragraph("Monthly NPS Trend", heading_style))
+            
+            monthly_nps = self.get_monthly_nps(feedbacks)
+            
+            if len(monthly_nps) >= 2:
+                # Create monthly NPS chart
+                monthly_chart = self.create_monthly_nps_chart(monthly_nps)
+                monthly_image = Image(io.BytesIO(monthly_chart), width=6*inch, height=3*inch)
+                story.append(monthly_image)
+                story.append(Spacer(1, 12))
+                
+                # Monthly NPS table
+                monthly_table_data = [['Month', 'NPS Score', 'Total', 'Status']]
+                for month in monthly_nps[-6:]:  # Last 6 months
+                    status = '✓ Met Target' if month['meets_target'] else '✗ Below Target'
+                    monthly_table_data.append([
+                        month['month_display'],
+                        str(month['nps_score']),
+                        str(month['total']),
+                        status
+                    ])
+                
+                monthly_table = Table(monthly_table_data, colWidths=[1.5*inch, 1.2*inch, 1*inch, 1.5*inch])
+                monthly_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 11),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E5E7EB')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F5F7FA')]),
+                ]))
+                story.append(monthly_table)
+            else:
+                story.append(Paragraph("Insufficient data for monthly NPS trend (need at least 2 months)", normal_style))
+            story.append(Spacer(1, 20))
+        
+        # Complaint Categories Section
+        if sections.get('complaintCategories', True):
+            story.append(Paragraph("Top Complaint Categories", heading_style))
+            
+            complaint_categories = self.get_complaint_categories(feedbacks, limit=8)
+            
+            if complaint_categories:
+                complaint_table_data = [['Category', 'Count', 'Percentage']]
+                
+                for cat in complaint_categories:
+                    complaint_table_data.append([
+                        cat['category'],
+                        str(cat['count']),
+                        f"{cat['percentage']}%"
+                    ])
+                
+                complaint_table = Table(complaint_table_data, colWidths=[2*inch, 1*inch, 1.2*inch])
+                complaint_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#003366')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, 0), 11),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#E5E7EB')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F5F7FA')]),
+                ]))
+                story.append(complaint_table)
+                story.append(Spacer(1, 8))
+                story.append(Paragraph("<i>Categories extracted from negative feedback using keyword detection</i>", 
+                    ParagraphStyle('ComplaintNote', parent=normal_style, fontSize=9, textColor=colors.gray)))
+            else:
+                story.append(Paragraph("No complaint categories found in the selected period.", normal_style))
             story.append(Spacer(1, 20))
         
         # Top Routes Section
@@ -748,12 +1148,54 @@ class ReportService:
         nps_rows = [
             ('NPS Score', nps_data['nps_score']),
             ('Grade', nps_data['grade']),
+            ('Target', nps_data['target']),
+            ('Status', nps_data['vs_target']),
             ('Promoters', f"{nps_data['promoter_pct']}%"),
             ('Passives', f"{nps_data['passive_pct']}%"),
             ('Detractors', f"{nps_data['detractor_pct']}%"),
         ]
         
         for row_idx, (metric, value) in enumerate(nps_rows, nps_start_row + 2):
+            ws_summary.cell(row=row_idx, column=1, value=metric)
+            ws_summary.cell(row=row_idx, column=2, value=value)
+        
+        # CSAT Section
+        csat_start_row = nps_start_row + len(nps_rows) + 3
+        csat_data = self.calculate_csat(stats)
+        
+        ws_summary.cell(row=csat_start_row, column=1, value="Customer Satisfaction (CSAT)")
+        ws_summary.cell(row=csat_start_row, column=1).font = Font(bold=True, size=12, color="003366")
+        
+        for col, header in enumerate(['Metric', 'Value'], 1):
+            cell = ws_summary.cell(row=csat_start_row + 1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+        
+        csat_rows = [
+            ('CSAT Score', f"{csat_data['csat_score']}%"),
+            ('Threshold', f"{csat_data['threshold']}%"),
+            ('Status', csat_data['status']),
+            ('Satisfied Count', csat_data['satisfied_count']),
+            ('Unsatisfied Count', csat_data['unsatisfied_count']),
+        ]
+        
+        for row_idx, (metric, value) in enumerate(csat_rows, csat_start_row + 2):
+            ws_summary.cell(row=row_idx, column=1, value=metric)
+            ws_summary.cell(row=row_idx, column=2, value=value)
+        
+        # Analytics Settings Section
+        settings_start_row = csat_start_row + len(csat_rows) + 3
+        
+        ws_summary.cell(row=settings_start_row, column=1, value="Analytics Settings Used")
+        ws_summary.cell(row=settings_start_row, column=1).font = Font(bold=True, size=12, color="003366")
+        
+        settings_rows = [
+            ('NPS Target', self.settings.nps_target),
+            ('CSAT Threshold', f"{self.settings.csat_threshold}%"),
+            ('Min Reviews per Route', self.settings.min_reviews_per_route),
+        ]
+        
+        for row_idx, (metric, value) in enumerate(settings_rows, settings_start_row + 1):
             ws_summary.cell(row=row_idx, column=1, value=metric)
             ws_summary.cell(row=row_idx, column=2, value=value)
         
@@ -812,6 +1254,64 @@ class ReportService:
             ws_trend.cell(row=row_idx, column=3, value=pos)
             ws_trend.cell(row=row_idx, column=4, value=neg)
             ws_trend.cell(row=row_idx, column=5, value=neu)
+        
+        # Monthly NPS Sheet
+        ws_monthly_nps = wb.create_sheet("Monthly NPS")
+        
+        monthly_nps = self.get_monthly_nps(feedbacks)
+        monthly_headers = ['Month', 'NPS Score', 'Total', 'Positive', 'Negative', 'Neutral', 'Meets Target']
+        
+        for col, header in enumerate(monthly_headers, 1):
+            cell = ws_monthly_nps.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+        
+        for row_idx, month_data in enumerate(monthly_nps, 2):
+            ws_monthly_nps.cell(row=row_idx, column=1, value=month_data['month_display'])
+            ws_monthly_nps.cell(row=row_idx, column=2, value=month_data['nps_score'])
+            ws_monthly_nps.cell(row=row_idx, column=3, value=month_data['total'])
+            ws_monthly_nps.cell(row=row_idx, column=4, value=month_data['positive'])
+            ws_monthly_nps.cell(row=row_idx, column=5, value=month_data['negative'])
+            ws_monthly_nps.cell(row=row_idx, column=6, value=month_data['neutral'])
+            ws_monthly_nps.cell(row=row_idx, column=7, value='Yes' if month_data['meets_target'] else 'No')
+        
+        # Route Performance Sheet
+        ws_routes = wb.create_sheet("Route Performance")
+        
+        top_routes = self.get_top_routes(feedbacks, limit=20)
+        route_headers = ['Route', 'Total Reviews', 'Positive Rate', 'Wilson Score', 'Confidence Level', 'Sentiment Score']
+        
+        for col, header in enumerate(route_headers, 1):
+            cell = ws_routes.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+        
+        for row_idx, route in enumerate(top_routes, 2):
+            ws_routes.cell(row=row_idx, column=1, value=route['route'])
+            ws_routes.cell(row=row_idx, column=2, value=route['total'])
+            ws_routes.cell(row=row_idx, column=3, value=f"{route['positive_rate']}%")
+            ws_routes.cell(row=row_idx, column=4, value=f"{route['wilson_score']}%")
+            ws_routes.cell(row=row_idx, column=5, value=route.get('confidence_level', 'N/A'))
+            ws_routes.cell(row=row_idx, column=6, value=f"{route.get('sentiment_score', 0)}%")
+        
+        # Complaint Categories Sheet
+        ws_complaints = wb.create_sheet("Complaint Categories")
+        
+        complaint_categories = self.get_complaint_categories(feedbacks, limit=15)
+        complaint_headers = ['Category', 'Count', 'Percentage of Negative']
+        
+        for col, header in enumerate(complaint_headers, 1):
+            cell = ws_complaints.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = Alignment(horizontal='center')
+        
+        for row_idx, cat in enumerate(complaint_categories, 2):
+            ws_complaints.cell(row=row_idx, column=1, value=cat['category'])
+            ws_complaints.cell(row=row_idx, column=2, value=cat['count'])
+            ws_complaints.cell(row=row_idx, column=3, value=f"{cat['percentage']}%")
         
         # Save workbook
         wb.save(filepath)

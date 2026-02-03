@@ -613,8 +613,9 @@ function NPSHistoryChart({ data, customTarget, customIndustry }: { data: NpsHist
     );
   }
 
-  const targetNps = customTarget ?? data.target_nps;
-  const industryBenchmark = customIndustry ?? data.industry_benchmark;
+  // Use defaults of 20 for target and 10 for industry if not provided
+  const targetNps = customTarget ?? data.target_nps ?? 20;
+  const industryBenchmark = customIndustry ?? data.industry_benchmark ?? 10;
 
   // Enhance data with status for tooltip - handle null NPS values and no data
   const enhancedHistory = data.history.map(item => ({
@@ -638,12 +639,13 @@ function NPSHistoryChart({ data, customTarget, customIndustry }: { data: NpsHist
   // Count months with no data
   const monthsWithNoData = enhancedHistory.filter(h => h.has_data === false).length;
 
-  // Calculate min/max for better Y-axis scaling
+  // Calculate min/max for better Y-axis scaling - always include target and industry
   const allNpsValues = validValues.length > 0 ? validValues : [0];
   const minNps = Math.min(...allNpsValues, targetNps, industryBenchmark);
   const maxNps = Math.max(...allNpsValues, targetNps, industryBenchmark);
-  const yMin = Math.max(-100, Math.floor(minNps / 10) * 10 - 20);
-  const yMax = Math.min(100, Math.ceil(maxNps / 10) * 10 + 20);
+  // Ensure Y-axis always shows target line with some padding
+  const yMin = Math.max(-100, Math.floor(Math.min(minNps, industryBenchmark - 5) / 10) * 10 - 10);
+  const yMax = Math.min(100, Math.ceil(Math.max(maxNps, targetNps + 5) / 10) * 10 + 10);
 
   // Create gradient colors for the line based on target
   const gradientOffset = () => {
@@ -659,8 +661,9 @@ function NPSHistoryChart({ data, customTarget, customIndustry }: { data: NpsHist
 
   const off = gradientOffset();
 
-  // Use summary from API if available, otherwise calculate
-  const summary = data.summary || {
+  // Always calculate locally using the custom target value (from settings)
+  // This ensures stats update when user changes the target in settings
+  const summary = {
     avg_nps: validValues.length > 0 ? Math.round(validValues.reduce((a, b) => a + b, 0) / validValues.length) : null,
     max_nps: validValues.length > 0 ? Math.max(...validValues) : null,
     min_nps: validValues.length > 0 ? Math.min(...validValues) : null,
@@ -981,10 +984,27 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   
-  // NPS Settings state
+  // NPS Settings state - load from localStorage immediately
   const [showNpsSettings, setShowNpsSettings] = useState(false);
-  const [npsTargetOverride, setNpsTargetOverride] = useState<number | null>(null);
-  const [npsIndustryOverride, setNpsIndustryOverride] = useState<number | null>(null);
+  const [npsTargetOverride, setNpsTargetOverride] = useState<number | null>(() => {
+    try {
+      const appSettings = localStorage.getItem('egyptair_settings');
+      if (appSettings) {
+        const parsed = JSON.parse(appSettings);
+        if (parsed.npsTarget) return parsed.npsTarget;
+      }
+      const legacyTarget = localStorage.getItem('nps_target');
+      if (legacyTarget) return Number(legacyTarget);
+    } catch (e) { /* ignore */ }
+    return 20; // Default target
+  });
+  const [npsIndustryOverride, setNpsIndustryOverride] = useState<number | null>(() => {
+    try {
+      const legacyIndustry = localStorage.getItem('nps_industry');
+      if (legacyIndustry) return Number(legacyIndustry);
+    } catch (e) { /* ignore */ }
+    return 10; // Default industry benchmark
+  });
   
   // Refs for chart export
   const sentimentChartRef = useRef<HTMLDivElement>(null);
@@ -1139,12 +1159,48 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     localStorage.setItem('nps_industry', String(industry));
   };
 
-  // Load NPS settings from localStorage on mount
+  // Load NPS settings from localStorage on mount - use the same key as Settings page
   useEffect(() => {
-    const savedTarget = localStorage.getItem('nps_target');
-    const savedIndustry = localStorage.getItem('nps_industry');
-    if (savedTarget) setNpsTargetOverride(Number(savedTarget));
-    if (savedIndustry) setNpsIndustryOverride(Number(savedIndustry));
+    const loadSettingsFromStorage = () => {
+      try {
+        // First try the Settings page key (egyptair_settings)
+        const appSettings = localStorage.getItem('egyptair_settings');
+        if (appSettings) {
+          const parsed = JSON.parse(appSettings);
+          if (parsed.npsTarget) setNpsTargetOverride(parsed.npsTarget);
+          // Industry benchmark might not be in settings, use default
+        }
+        // Fallback to legacy keys
+        const savedTarget = localStorage.getItem('nps_target');
+        const savedIndustry = localStorage.getItem('nps_industry');
+        if (savedTarget && !npsTargetOverride) setNpsTargetOverride(Number(savedTarget));
+        if (savedIndustry) setNpsIndustryOverride(Number(savedIndustry));
+      } catch (e) {
+        console.error('Failed to load NPS settings:', e);
+      }
+    };
+    loadSettingsFromStorage();
+    
+    // Listen for storage changes (when Settings page saves from different tab)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'egyptair_settings') {
+        loadSettingsFromStorage();
+      }
+    };
+    
+    // Listen for custom event from Settings page (same tab)
+    const handleSettingsUpdate = (e: CustomEvent) => {
+      if (e.detail?.npsTarget) {
+        setNpsTargetOverride(e.detail.npsTarget);
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('settings:updated', handleSettingsUpdate as EventListener);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('settings:updated', handleSettingsUpdate as EventListener);
+    };
   }, []);
 
   // Export chart as image

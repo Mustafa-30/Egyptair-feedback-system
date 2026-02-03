@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   FileText, 
   Download, 
@@ -95,8 +95,15 @@ const REPORT_TYPES: ReportTypeInfo[] = [
   },
 ];
 
+// Render counter for debugging
+let renderCount = 0;
+
 export function Reports() {
   const { user } = useAuth();
+  
+  // Debug render count
+  renderCount++;
+  console.log(`[Reports] Component rendered (count: ${renderCount})`);
   
   // Report configuration
   const [selectedReportType, setSelectedReportType] = useState<ReportCategory>('executive');
@@ -151,6 +158,10 @@ export function Reports() {
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   
+  // Ref to track if component is mounted
+  const isMountedRef = useRef(true);
+  const generationInProgressRef = useRef(false);
+  
   // Preview stats
   const [previewStats, setPreviewStats] = useState<ReportPreviewStats | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
@@ -161,6 +172,16 @@ export function Reports() {
     csatScore: number;
     totalFeedback: number;
   } | null>(null);
+
+  // Track mounted state and log mount/unmount
+  useEffect(() => {
+    console.log('[Reports] Component MOUNTED');
+    isMountedRef.current = true;
+    return () => {
+      console.log('[Reports] Component UNMOUNTING');
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Load analytics settings when component mounts
   useEffect(() => {
@@ -204,10 +225,15 @@ export function Reports() {
     fetchDashboardStats();
   }, []);
 
-  // Fetch preview stats when filters change
+  // Fetch preview stats when filters change (not when report is generating)
   const fetchPreviewStats = useCallback(async () => {
+    // Don't fetch while generating report - use ref to avoid dependency
+    if (generationInProgressRef.current) {
+      console.log('[Preview] Skipping fetch - report generation in progress');
+      return;
+    }
+    
     setLoadingPreview(true);
-    setError(null);
     
     try {
       const sentiments: string[] = [];
@@ -227,16 +253,24 @@ export function Reports() {
         languages: languages.length < 3 ? languages.join(',') : undefined,
       });
       
-      setPreviewStats(stats);
+      // Only update state if still mounted and not generating
+      if (isMountedRef.current && !generationInProgressRef.current) {
+        setPreviewStats(stats);
+      }
     } catch (err) {
       console.error('Failed to fetch preview stats:', err);
     } finally {
-      setLoadingPreview(false);
+      if (isMountedRef.current) {
+        setLoadingPreview(false);
+      }
     }
-  }, [dateRange, sentimentFilters, languageFilters]);
+  }, [dateRange, sentimentFilters, languageFilters]); // Removed isGenerating and reportGenerated
 
   useEffect(() => {
-    fetchPreviewStats();
+    // Only fetch preview when not generating
+    if (!generationInProgressRef.current) {
+      fetchPreviewStats();
+    }
   }, [fetchPreviewStats]);
 
   const handleQuickSelect = (period: string) => {
@@ -268,6 +302,24 @@ export function Reports() {
   };
 
   const handleGenerateReport = async () => {
+    // Prevent duplicate generation
+    if (generationInProgressRef.current) {
+      console.log('[Report Generation] Already in progress, ignoring click');
+      return;
+    }
+    
+    generationInProgressRef.current = true;
+    
+    console.log('='.repeat(50));
+    console.log('[Report Generation] Starting report generation...');
+    console.log('[Report Generation] Timestamp:', new Date().toISOString());
+    console.log('[Report Generation] Report type:', selectedReportType);
+    console.log('[Report Generation] Export format:', exportFormat);
+    console.log('[Report Generation] Title:', reportTitle);
+    console.log('[Report Generation] Analytics settings:', analyticsSettings);
+    console.log('[Report Generation] Component mounted:', isMountedRef.current);
+    
+    // Set states atomically to prevent race conditions
     setIsGenerating(true);
     setProgress(0);
     setReportGenerated(false);
@@ -275,11 +327,23 @@ export function Reports() {
     setError(null);
 
     const progressInterval = setInterval(() => {
+      if (!isMountedRef.current) {
+        clearInterval(progressInterval);
+        return;
+      }
       setProgress((prev) => {
         if (prev >= 90) return prev;
         return prev + 10;
       });
     }, 300);
+
+    let intervalCleared = false;
+    const clearProgressInterval = () => {
+      if (!intervalCleared) {
+        clearInterval(progressInterval);
+        intervalCleared = true;
+      }
+    };
 
     try {
       const sentiments: string[] = [];
@@ -292,8 +356,100 @@ export function Reports() {
       if (languageFilters.english) languages.push('english');
       if (languageFilters.mixed) languages.push('mixed');
 
-      // Map report type to API report_type
+      // Validate at least one sentiment is selected
+      if (sentiments.length === 0) {
+        throw new Error('Please select at least one sentiment filter');
+      }
+
+      // Map report type to API report_type (csv = detailed/Excel, otherwise PDF)
       const apiReportType = exportFormat === 'csv' ? 'detailed' : 'summary';
+      
+      // Determine which sections to include based on selected report type
+      // Each report type has different focus areas
+      const getSectionsForReportType = () => {
+        switch (selectedReportType) {
+          case 'executive':
+            return {
+              include_executive_summary: enabledSections.sentimentOverview,
+              include_sentiment_chart: enabledSections.sentimentOverview,
+              include_nps_score: enabledSections.npsVsTarget,
+              include_csat_score: enabledSections.csatStatus,
+              include_monthly_nps_trend: enabledSections.keyTrends,
+              include_trend_chart: enabledSections.keyTrends,
+              include_top_routes: false,
+              include_stats_table: false,
+              include_negative_samples: false,
+              include_complaint_categories: false,
+            };
+          case 'operational':
+            return {
+              include_executive_summary: true,
+              include_sentiment_chart: false,
+              include_nps_score: false,
+              include_csat_score: false,
+              include_monthly_nps_trend: false,
+              include_trend_chart: false,
+              include_top_routes: false,
+              include_stats_table: enabledSections.processingStatus,
+              include_negative_samples: false,
+              include_complaint_categories: false,
+            };
+          case 'route':
+            return {
+              include_executive_summary: false,
+              include_sentiment_chart: false,
+              include_nps_score: false,
+              include_csat_score: false,
+              include_monthly_nps_trend: false,
+              include_trend_chart: false,
+              include_top_routes: enabledSections.routeRankings,
+              include_stats_table: enabledSections.avgRatingByRoute || enabledSections.sentimentByRoute,
+              include_negative_samples: false,
+              include_complaint_categories: false,
+            };
+          case 'insights':
+            return {
+              include_executive_summary: false,
+              include_sentiment_chart: enabledSections.languageDistribution,
+              include_nps_score: false,
+              include_csat_score: false,
+              include_monthly_nps_trend: false,
+              include_trend_chart: false,
+              include_top_routes: false,
+              include_stats_table: false,
+              include_negative_samples: enabledSections.feedbackSamples,
+              include_complaint_categories: enabledSections.topComplaints,
+            };
+          default:
+            return {
+              include_executive_summary: true,
+              include_sentiment_chart: true,
+              include_nps_score: true,
+              include_csat_score: true,
+              include_monthly_nps_trend: true,
+              include_trend_chart: true,
+              include_top_routes: true,
+              include_stats_table: true,
+              include_negative_samples: true,
+              include_complaint_categories: true,
+            };
+        }
+      };
+
+      const reportSections = getSectionsForReportType();
+      
+      console.log('[Report Generation] Sending API request...');
+      console.log('[Report Generation] Selected report type:', selectedReportType);
+      console.log('[Report Generation] API report_type:', apiReportType);
+      console.log('[Report Generation] Report sections:', reportSections);
+      console.log('[Report Generation] API request params:', {
+        report_type: apiReportType,
+        title: reportTitle,
+        date_from: dateRange.from,
+        date_to: dateRange.to,
+        sentiments: sentiments.join(','),
+        languages: languages.join(','),
+      });
 
       const result = await reportsApi.generate({
         report_type: apiReportType,
@@ -302,29 +458,77 @@ export function Reports() {
         date_to: dateRange.to || undefined,
         sentiments: sentiments.length < 3 ? sentiments.join(',') : undefined,
         languages: languages.length < 3 ? languages.join(',') : undefined,
-        include_executive_summary: enabledSections.sentimentOverview,
-        include_sentiment_chart: enabledSections.sentimentOverview,
-        include_trend_chart: enabledSections.keyTrends,
-        include_stats_table: enabledSections.routeRankings || enabledSections.avgRatingByRoute,
-        include_negative_samples: enabledSections.feedbackSamples || enabledSections.topComplaints,
+        ...reportSections,
         include_logo: includeLogo,
         orientation: orientation,
+        nps_target: analyticsSettings.npsTarget,
+        csat_threshold: analyticsSettings.csatThreshold,
+        min_reviews_per_route: analyticsSettings.minReviewsPerRoute,
       });
 
-      clearInterval(progressInterval);
+      console.log('[Report Generation] API Response received:', result);
+      console.log('[Report Generation] Component still mounted:', isMountedRef.current);
+      
+      clearProgressInterval();
+      
+      // Check if component is still mounted before updating state
+      if (!isMountedRef.current) {
+        console.log('[Report Generation] Component unmounted, aborting state update');
+        generationInProgressRef.current = false;
+        return;
+      }
+      
       setProgress(100);
+      
+      // Validate the response has required fields
+      if (!result || !result.report_id) {
+        throw new Error('Invalid response from server - missing report ID');
+      }
+      
+      console.log('[Report Generation] Setting success state...');
       setGeneratedReport(result);
       setReportGenerated(true);
-    } catch (err) {
-      clearInterval(progressInterval);
-      console.error('Report generation failed:', err);
-      if (err instanceof ApiError) {
-        setError(err.detail || 'Failed to generate report');
-      } else {
-        setError('Failed to generate report. Please try again.');
-      }
-    } finally {
       setIsGenerating(false);
+      generationInProgressRef.current = false;
+      
+      console.log('[Report Generation] ✓ Report generated successfully!');
+      console.log('[Report Generation] Report ID:', result.report_id);
+      console.log('='.repeat(50));
+      
+    } catch (err: unknown) {
+      clearProgressInterval();
+      console.error('[Report Generation] ✗ Failed:', err);
+      
+      // Check if component is still mounted before updating state
+      if (!isMountedRef.current) {
+        console.log('[Report Generation] Component unmounted during error handling');
+        generationInProgressRef.current = false;
+        return;
+      }
+      
+      let errorMessage = 'Failed to generate report. Please try again.';
+      
+      if (err instanceof ApiError) {
+        console.error('[Report Generation] API Error Status:', err.status);
+        console.error('[Report Generation] API Error Detail:', err.detail);
+        errorMessage = err.detail || `Server error (${err.status}): ${err.message}`;
+        
+        // Don't trigger logout on report generation errors
+        if (err.status === 401) {
+          errorMessage = 'Session expired. Please refresh the page and try again.';
+        }
+      } else if (err instanceof Error) {
+        console.error('[Report Generation] Error Message:', err.message);
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
+      setProgress(0);
+      setIsGenerating(false);
+      generationInProgressRef.current = false;
+      console.log('[Report Generation] Error state set, generation ref cleared');
+      console.log('='.repeat(50));
+      // Don't reset reportGenerated or generatedReport on error - preserve previous state
     }
   };
 
@@ -372,6 +576,8 @@ export function Reports() {
   };
 
   const handleReset = () => {
+    console.log('[Reports] handleReset called');
+    console.trace(); // Log stack trace to see who called this
     setSelectedReportType('executive');
     setExportFormat('pdf');
     setDateRange({ from: '', to: '' });
@@ -496,10 +702,22 @@ export function Reports() {
       {error && (
         <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg p-4 flex items-start gap-3">
           <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <div>
+          <div className="flex-1">
             <p className="text-red-800 dark:text-red-300 font-medium">Report Generation Failed</p>
-            <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
+            <p className="text-red-600 dark:text-red-400 text-sm mt-1">{error}</p>
+            <p className="text-red-500 dark:text-red-400 text-xs mt-2">
+              Check browser console (F12) for detailed error logs.
+            </p>
           </div>
+          <button
+            onClick={() => setError(null)}
+            className="text-red-400 hover:text-red-600 dark:text-red-500 dark:hover:text-red-300 p-1"
+            title="Dismiss error"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
         </div>
       )}
 
@@ -909,6 +1127,16 @@ export function Reports() {
                       )}
                     </div>
                   </>
+                )}
+
+                {/* Inline Error Display */}
+                {error && !isGenerating && (
+                  <div className="p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg">
+                    <div className="flex items-center gap-2 text-red-600 dark:text-red-400 text-sm">
+                      <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                      <span className="line-clamp-2">{error}</span>
+                    </div>
+                  </div>
                 )}
 
                 {/* Generate Button */}

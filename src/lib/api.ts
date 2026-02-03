@@ -98,11 +98,13 @@ async function apiFetch<T>(
     
     // Handle 401 - unauthorized (only logout if we had a token)
     if (response.status === 401 && localStorage.getItem(TOKEN_KEY)) {
-      // Don't clear token for /auth/me endpoint (session check)
-      if (!endpoint.includes('/auth/me')) {
+      // Don't clear token for /auth/me endpoint (session check) or report endpoints
+      if (!endpoint.includes('/auth/me') && !endpoint.includes('/reports/')) {
         console.log('[AUTH] 401 received, clearing token and triggering logout');
         setAccessToken(null);
         window.dispatchEvent(new CustomEvent('auth:logout'));
+      } else {
+        console.log('[AUTH] 401 received on protected endpoint, not triggering logout');
       }
     }
     
@@ -846,8 +848,16 @@ export interface ReportGenerateParams {
   include_trend_chart?: boolean;
   include_stats_table?: boolean;
   include_negative_samples?: boolean;
+  include_nps_score?: boolean;
+  include_top_routes?: boolean;
+  include_csat_score?: boolean;
+  include_monthly_nps_trend?: boolean;
+  include_complaint_categories?: boolean;
   include_logo?: boolean;
   orientation?: 'portrait' | 'landscape';
+  nps_target?: number;
+  csat_threshold?: number;
+  min_reviews_per_route?: number;
 }
 
 export const reportsApi = {
@@ -892,10 +902,26 @@ export const reportsApi = {
       searchParams.append('include_stats_table', params.include_stats_table.toString());
     if (params.include_negative_samples !== undefined) 
       searchParams.append('include_negative_samples', params.include_negative_samples.toString());
+    if (params.include_nps_score !== undefined) 
+      searchParams.append('include_nps_score', params.include_nps_score.toString());
+    if (params.include_top_routes !== undefined) 
+      searchParams.append('include_top_routes', params.include_top_routes.toString());
+    if (params.include_csat_score !== undefined) 
+      searchParams.append('include_csat_score', params.include_csat_score.toString());
+    if (params.include_monthly_nps_trend !== undefined) 
+      searchParams.append('include_monthly_nps_trend', params.include_monthly_nps_trend.toString());
+    if (params.include_complaint_categories !== undefined) 
+      searchParams.append('include_complaint_categories', params.include_complaint_categories.toString());
     if (params.include_logo !== undefined) 
       searchParams.append('include_logo', params.include_logo.toString());
     if (params.orientation) 
       searchParams.append('orientation', params.orientation);
+    if (params.nps_target !== undefined) 
+      searchParams.append('nps_target', params.nps_target.toString());
+    if (params.csat_threshold !== undefined) 
+      searchParams.append('csat_threshold', params.csat_threshold.toString());
+    if (params.min_reviews_per_route !== undefined) 
+      searchParams.append('min_reviews_per_route', params.min_reviews_per_route.toString());
     
     return apiFetch<ReportGenerateResponse>(`/reports/generate?${searchParams.toString()}`, {
       method: 'POST',

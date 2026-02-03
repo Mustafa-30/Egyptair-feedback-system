@@ -96,19 +96,19 @@ function AppContent() {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard onNavigate={handleNavigate} />;
+        return <Dashboard key="dashboard" onNavigate={handleNavigate} />;
       case 'upload':
-        return <UploadFeedback onNavigate={handleNavigate} />;
+        return <UploadFeedback key="upload" onNavigate={handleNavigate} />;
       case 'feedback':
-        return <FeedbackList onViewFeedback={handleViewFeedback} initialFilters={pageFilters} />;
+        return <FeedbackList key="feedback" onViewFeedback={handleViewFeedback} initialFilters={pageFilters} />;
       case 'reports':
-        return <Reports />;
+        return <Reports key="reports" />;
       case 'users':
-        return <UserManagement />;
+        return <UserManagement key="users" />;
       case 'settings':
-        return <Settings />;
+        return <Settings key="settings" />;
       default:
-        return <Dashboard onNavigate={handleNavigate} />;
+        return <Dashboard key="dashboard-default" onNavigate={handleNavigate} />;
     }
   };
 
